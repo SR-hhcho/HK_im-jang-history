@@ -11,7 +11,6 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
-  <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Noto Sans KR', sans-serif; background: #f0f4f9; color: #1e293b; -webkit-font-smoothing: antialiased; }
@@ -278,7 +277,20 @@
 
     /* ─── MAP VIEW ─── */
     function MapView({ properties }) {
+      const [kakaoReady, setKakaoReady] = useState(false);
+      const [loadError, setLoadError] = useState(false);
+
       useEffect(() => {
+        if (window.kakao && window.kakao.maps) { setKakaoReady(true); return; }
+        const script = document.createElement('script');
+        script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services&autoload=false';
+        script.onload = () => { kakao.maps.load(() => setKakaoReady(true)); };
+        script.onerror = () => setLoadError(true);
+        document.head.appendChild(script);
+      }, []);
+
+      useEffect(() => {
+        if (!kakaoReady) return;
         const initMap = () => {
           if (!window.kakao || !window.kakao.maps) {
             setTimeout(initMap, 300);
@@ -320,7 +332,7 @@
           if (hasMarker) map.setBounds(bounds);
         };
         initMap();
-      }, [properties]);
+      }, [kakaoReady, properties]);
 
       const withCoords = properties.filter(p => p.lat && p.lng);
       const noCoords   = properties.filter(p => !p.lat || !p.lng);
@@ -338,7 +350,18 @@
             </div>
           </div>
           <div className="card" style={{overflow:"hidden",marginBottom:16}}>
-            <div id="kakao-map" style={{width:"100%",height:520}}></div>
+            {loadError
+              ? <div style={{height:520,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:12,background:"#fff8f8"}}>
+                  <span style={{fontSize:40}}>⚠️</span>
+                  <p style={{fontSize:14,color:"#dc2626",fontWeight:600}}>카카오맵 로드 실패</p>
+                  <p style={{fontSize:12,color:"#64748b",textAlign:"center"}}>카카오 개발자 콘솔에서<br/>카카오맵 ON 여부 및 앱 키를 확인해주세요</p>
+                </div>
+              : !kakaoReady
+                ? <div style={{height:520,display:"flex",alignItems:"center",justifyContent:"center",gap:10,color:"#64748b"}}>
+                    <span style={{fontSize:20}}>🗺️</span> 지도 불러오는 중...
+                  </div>
+                : <div id="kakao-map" style={{width:"100%",height:520}}></div>
+            }
           </div>
           {noCoords.length>0 && (
             <div className="card" style={{padding:20,background:"#fffbeb",border:"1px solid #fde68a"}}>
@@ -593,7 +616,12 @@
                   <button type="button" className="btn-secondary" style={{flexShrink:0,padding:"10px 14px",fontSize:13,display:"flex",alignItems:"center",gap:5}}
                     onClick={()=>{
                       if (!form.address.trim()) return alert("주소를 먼저 입력해주세요");
-                      if (!window.kakao || !window.kakao.maps) return alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요");
+                      if (!window.kakao || !window.kakao.maps) {
+                        const s = document.createElement('script');
+                        s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services&autoload=false';
+                        s.onload=()=>kakao.maps.load(()=>alert("지도 준비됐어요! 다시 📍 버튼 눌러주세요"));
+                        document.head.appendChild(s); return;
+                      }
                       kakao.maps.load(()=>{
                         const geocoder = new kakao.maps.services.Geocoder();
                         geocoder.addressSearch(form.address, (result, status) => {
