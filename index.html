@@ -279,8 +279,11 @@
     /* ─── MAP VIEW ─── */
     function MapView({ properties }) {
       useEffect(() => {
-        if (!window.kakao || !window.kakao.maps) return;
-        kakao.maps.load(() => {
+        const initMap = () => {
+          if (!window.kakao || !window.kakao.maps) {
+            setTimeout(initMap, 300);
+            return;
+          }
           const container = document.getElementById("kakao-map");
           if (!container) return;
           const map = new kakao.maps.Map(container, {
@@ -315,7 +318,8 @@
             });
           });
           if (hasMarker) map.setBounds(bounds);
-        });
+        };
+        initMap();
       }, [properties]);
 
       const withCoords = properties.filter(p => p.lat && p.lng);
