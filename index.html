@@ -11,6 +11,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+  <script type="text/javascript" src="//dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Noto Sans KR', sans-serif; background: #f0f4f9; color: #1e293b; -webkit-font-smoothing: antialiased; }
@@ -111,6 +112,7 @@
       buildingName:"", address:"", size:"", price:"",
       nearbyStation:"", constructionYear:"",
       infrastructure:[], mediaLinks:[], memo:"",
+      lat: null, lng: null,
       visitDate: new Date().toISOString().slice(0,10),
       createdAt: new Date().toISOString(),
     });
@@ -276,32 +278,70 @@
 
     /* ─── MAP VIEW ─── */
     function MapView({ properties }) {
+      useEffect(() => {
+        if (!window.kakao || !window.kakao.maps) return;
+        kakao.maps.load(() => {
+          const container = document.getElementById("kakao-map");
+          if (!container) return;
+          const map = new kakao.maps.Map(container, {
+            center: new kakao.maps.LatLng(37.5665, 126.9780), level: 9
+          });
+          map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+          map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPLEFT);
+
+          const bounds = new kakao.maps.LatLngBounds();
+          let hasMarker = false;
+          let openOverlay = null;
+
+          properties.forEach(prop => {
+            if (!prop.lat || !prop.lng) return;
+            const pos = new kakao.maps.LatLng(prop.lat, prop.lng);
+            bounds.extend(pos);
+            hasMarker = true;
+            const marker = new kakao.maps.Marker({ position: pos, map });
+            const overlay = new kakao.maps.CustomOverlay({
+              content: `<div style="background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:160px;border-top:3px solid #1d4ed8;font-family:sans-serif">
+                <p style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:4px">${prop.buildingName||"이름없음"}</p>
+                <p style="font-size:11px;color:#64748b;margin-bottom:6px">${prop.address||""}</p>
+                <p style="font-size:13px;color:#16a34a;font-weight:700">${prop.price?formatPrice(prop.price):"가격 미입력"}</p>
+                ${prop.size?`<p style="font-size:11px;color:#1d4ed8;margin-top:2px">${prop.size}평 · ${prop.constructionYear||""}년</p>`:""}
+              </div>`,
+              position: pos, yAnchor: 1.45, zIndex: 3
+            });
+            kakao.maps.event.addListener(marker, "click", () => {
+              if (openOverlay) openOverlay.setMap(null);
+              if (openOverlay === overlay) { openOverlay = null; return; }
+              overlay.setMap(map); openOverlay = overlay;
+            });
+          });
+          if (hasMarker) map.setBounds(bounds);
+        });
+      }, [properties]);
+
+      const withCoords = properties.filter(p => p.lat && p.lng);
+      const noCoords   = properties.filter(p => !p.lat || !p.lng);
+
       return (
         <div style={{padding:"36px 32px"}}>
-          <div style={{marginBottom:24}}>
-            <h1 style={{fontSize:26,fontWeight:800,color:"#0f172a"}}>지도 보기</h1>
-            <p style={{fontSize:14,color:"#64748b",marginTop:5}}>Step 2에서 네이버지도 API 연동 예정</p>
-          </div>
-          <div className="card" style={{height:480,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"linear-gradient(135deg,#f0f4f9 0%,#e2eaf5 100%)",border:"2px dashed #c7d2e0"}}>
-            <div style={{fontSize:56,marginBottom:18}}>🗺️</div>
-            <h3 style={{fontSize:20,fontWeight:700,color:"#374151",marginBottom:10}}>네이버지도 연동 준비 중</h3>
-            <p style={{fontSize:14,color:"#64748b",textAlign:"center",maxWidth:320,lineHeight:1.7}}>
-              네이버 Maps API 키 발급 후<br/>방문한 아파트가 지도 위에 마커로 표시됩니다
-            </p>
-            <div style={{marginTop:24,padding:"10px 20px",background:"#fff",borderRadius:10,fontSize:13,color:"#475569",boxShadow:"0 2px 8px rgba(0,0,0,.08)"}}>
-              📍 등록된 임장지 <strong style={{color:"#1d4ed8"}}>{properties.length}</strong>곳
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:20,flexWrap:"wrap",gap:12}}>
+            <div>
+              <h1 style={{fontSize:26,fontWeight:800,color:"#0f172a"}}>지도 보기</h1>
+              <p style={{fontSize:14,color:"#64748b",marginTop:5}}>마커 클릭 시 상세 정보 · 위치는 임장 추가/수정에서 📍버튼으로 설정</p>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <span className="tag tag-blue">📍 위치등록 {withCoords.length}곳</span>
+              {noCoords.length>0 && <span className="tag tag-orange">⚠️ 미등록 {noCoords.length}곳</span>}
             </div>
           </div>
-          {properties.length>0 && (
-            <div className="card" style={{marginTop:20,padding:24}}>
-              <p className="section-label">등록 임장 목록</p>
-              {properties.map((p,i)=>(
-                <div key={p.id} style={{display:"flex",alignItems:"center",gap:14,padding:"10px 0",borderBottom:"1px solid #f8fafc"}}>
-                  <div style={{width:26,height:26,background:"#dbeafe",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#1d4ed8",flexShrink:0}}>{i+1}</div>
-                  <div style={{flex:1}}><p style={{fontSize:14,fontWeight:600}}>{p.buildingName||"이름 없음"}</p><p style={{fontSize:12,color:"#64748b"}}>{p.address}</p></div>
-                  {p.price && <span className="tag tag-green">{formatPrice(p.price)}</span>}
-                </div>
-              ))}
+          <div className="card" style={{overflow:"hidden",marginBottom:16}}>
+            <div id="kakao-map" style={{width:"100%",height:520}}></div>
+          </div>
+          {noCoords.length>0 && (
+            <div className="card" style={{padding:20,background:"#fffbeb",border:"1px solid #fde68a"}}>
+              <p style={{fontSize:13,fontWeight:600,color:"#92400e",marginBottom:10}}>⚠️ 지도 위치 미설정 — 수정 화면에서 주소 입력 후 📍 버튼을 눌러주세요</p>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                {noCoords.map(p=><span key={p.id} style={{fontSize:12,background:"#fff",border:"1px solid #fcd34d",borderRadius:20,padding:"3px 10px",color:"#78350f"}}>{p.buildingName||"이름없음"}</span>)}
+              </div>
             </div>
           )}
         </div>
@@ -542,7 +582,32 @@
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
               <div><LBL>아파트명 *</LBL><input className="input-field" placeholder="예: 래미안 퍼스티지" value={form.buildingName} onChange={e=>set("buildingName",e.target.value)} /></div>
               <div><LBL>임장일</LBL><input className="input-field" type="date" value={form.visitDate} onChange={e=>set("visitDate",e.target.value)} /></div>
-              <div style={{gridColumn:"1/-1"}}><LBL>주소</LBL><input className="input-field" placeholder="예: 서울시 강남구 대치동 123-4" value={form.address} onChange={e=>set("address",e.target.value)} /></div>
+              <div style={{gridColumn:"1/-1"}}>
+                <LBL>주소</LBL>
+                <div style={{display:"flex",gap:8}}>
+                  <input className="input-field" placeholder="예: 서울시 강남구 대치동 123-4" value={form.address} onChange={e=>set("address",e.target.value)} style={{flex:1}} />
+                  <button type="button" className="btn-secondary" style={{flexShrink:0,padding:"10px 14px",fontSize:13,display:"flex",alignItems:"center",gap:5}}
+                    onClick={()=>{
+                      if (!form.address.trim()) return alert("주소를 먼저 입력해주세요");
+                      if (!window.kakao || !window.kakao.maps) return alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요");
+                      kakao.maps.load(()=>{
+                        const geocoder = new kakao.maps.services.Geocoder();
+                        geocoder.addressSearch(form.address, (result, status) => {
+                          if (status === kakao.maps.services.Status.OK) {
+                            set("lat", parseFloat(result[0].y));
+                            set("lng", parseFloat(result[0].x));
+                            alert("📍 위치 설정 완료!");
+                          } else {
+                            alert("주소를 찾을 수 없어요. 더 자세히 입력해보세요.");
+                          }
+                        });
+                      });
+                    }}>
+                    {form.lat ? "📍 위치완료" : "📍 위치설정"}
+                  </button>
+                </div>
+                {form.lat && <p style={{fontSize:11,color:"#16a34a",marginTop:4,fontWeight:600}}>✅ 지도 좌표 설정됨 ({form.lat.toFixed(4)}, {form.lng.toFixed(4)})</p>}
+              </div>
               <div><LBL>평수 (전용면적)</LBL><input className="input-field" placeholder="예: 34" value={form.size} onChange={e=>set("size",e.target.value)} /></div>
               <div><LBL>준공년도</LBL><input className="input-field" placeholder="예: 2010" value={form.constructionYear} onChange={e=>set("constructionYear",e.target.value)} /></div>
               <div>
