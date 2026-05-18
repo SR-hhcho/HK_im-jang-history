@@ -150,8 +150,8 @@
     };
 
 
-    const ANTHROPIC_KEY = "YOUR_ANTHROPIC_API_KEY"; // console.anthropic.com 에서 발급
-    const IS_CLAUDE = ANTHROPIC_KEY !== "YOUR_ANTHROPIC_API_KEY";
+    const GEMINI_KEY = "AIzaSyAPTvEyADUgsUpWozjZ7XZLZLSnwhiSZWI";
+    const IS_AI = true;
     const GOV_API_KEY = "b33c6e5b219113eef5c49208c9cf1e1bda30843f7939c1377215c335cd73beff"; // data.go.kr 공공데이터 API 키
     const IS_GOV_API  = GOV_API_KEY !== "YOUR_DATA_GO_KR_API_KEY";
 
@@ -724,29 +724,23 @@
 
     /* ─── AI 요약 생성 ─── */
     async function generateAiSummary(prop) {
-      if (!IS_CLAUDE) return "";
+      if (!IS_AI) return "";
       try {
-        const res = await fetch("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-api-key": ANTHROPIC_KEY,
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-use": "true"
-          },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514",
-            max_tokens: 150,
-            messages: [{ role: "user", content:
-              `아파트 임장 평가를 50자 이내 한 문장으로 작성해주세요. 핵심 장단점 위주로.\n\n` +
-              `아파트: ${prop.buildingName} / 가격: ${formatPrice(prop.price)} / ${prop.size}평 / ${prop.constructionYear}년\n` +
-              `위치: ${prop.address} / 인프라: ${prop.infrastructure.map(i=>i.label).join(", ")||"정보없음"}\n` +
-              `메모: ${prop.memo||"없음"}\n\n한 문장만 출력하세요.`
-            }]
-          })
-        });
+        const prompt =
+          `부동산 임장 평가를 50자 이내 한 문장으로 작성해주세요. 핵심 장단점 위주로.\n` +
+          `아파트: ${prop.buildingName} / 가격: ${formatPrice(prop.price)} / ${prop.size}평 / ${prop.constructionYear}년\n` +
+          `위치: ${prop.address} / 인프라: ${prop.infrastructure.map(i=>i.label).join(", ")||"정보없음"}\n` +
+          `메모: ${prop.memo||"없음"}\n한 문장만 출력하세요.`;
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+          }
+        );
         const data = await res.json();
-        return data.content?.[0]?.text?.slice(0, 80) || "";
+        return (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim().slice(0, 80);
       } catch(e) { return ""; }
     }
 
@@ -1220,7 +1214,7 @@
           </div>
 
           {/* AI 요약 */}
-          {IS_CLAUDE && (
+          {IS_AI && (
             <div className="card" style={{padding:20,marginBottom:12,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:form.aiSummary?10:0}}>
                 <p style={{fontSize:13,fontWeight:600,color:"#0369a1"}}>🤖 AI 임장 평가 (50자)</p>
