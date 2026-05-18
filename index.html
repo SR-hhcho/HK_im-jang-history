@@ -97,6 +97,20 @@
     /* ─── CONSTANTS ─── */
     const PASS = "1234";
 
+    /* ─── FONT LOADER ─── */
+    function FontLoader() {
+      useEffect(() => {
+        if (document.querySelector('link[data-font="noto"]')) return;
+        const link = document.createElement("link");
+        link.rel  = "stylesheet";
+        link.href = "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700;900&display=swap";
+        link.setAttribute("data-font", "noto");
+        document.head.appendChild(link);
+      }, []);
+      return null;
+    }
+
+
     /* ─── 법정동코드 자동감지 (서울+경기) ─── */
     const DONG_CODES = {
       // 서울특별시
