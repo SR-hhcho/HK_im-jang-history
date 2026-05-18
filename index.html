@@ -150,6 +150,8 @@
     };
 
 
+    const ANTHROPIC_KEY = "YOUR_ANTHROPIC_API_KEY"; // console.anthropic.com 에서 발급
+    const IS_CLAUDE = ANTHROPIC_KEY !== "YOUR_ANTHROPIC_API_KEY";
     const GOV_API_KEY = "b33c6e5b219113eef5c49208c9cf1e1bda30843f7939c1377215c335cd73beff"; // data.go.kr 공공데이터 API 키
     const IS_GOV_API  = GOV_API_KEY !== "YOUR_DATA_GO_KR_API_KEY";
 
@@ -384,7 +386,7 @@
     }
 
     /* ─── MAP VIEW ─── */
-    function MapView({ properties }) {
+    function MapView({ properties, onSelect }) {
       const [kakaoReady, setKakaoReady] = useState(false);
       const [loadError, setLoadError] = useState(false);
 
@@ -434,14 +436,18 @@
               overlay.setMap(map); openOverlay = overlay;
             });
             const overlay = new kakao.maps.CustomOverlay({
-              content: `<div style="background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:170px;border-top:3px solid #1d4ed8;font-family:sans-serif">
-                <p style="font-weight:700;font-size:14px;color:#0f172a;margin-bottom:4px">${prop.buildingName||"이름없음"}</p>
-                <p style="font-size:11px;color:#64748b;margin-bottom:6px">${prop.address||""}</p>
-                <p style="font-size:13px;color:#16a34a;font-weight:700;margin-bottom:2px">${prop.price?formatPrice(prop.price):"가격 미입력"}</p>
-                ${prop.size?`<p style="font-size:11px;color:#1d4ed8;margin-bottom:4px">${prop.size}평${prop.constructionYear?" · "+prop.constructionYear+"년":""}</p>`:""}
-                <p style="font-size:11px;color:#94a3b8;border-top:1px solid #f1f5f9;padding-top:4px;margin-top:2px">📅 임장일: ${prop.visitDate||""}</p>
+              content: `<div style="background:#fff;border-radius:10px;padding:12px 16px;bomin-width:180px;border-top:3px solid #1d4ed8;font-family:sans-serif">
+                <p style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:3px">${prop.buildingName||"이름없음"}</p>
+                <p style="font-size:11px;color:#64748b;margin-bottom:5px">${prop.address||""}</p>
+                <p style="font-size:13px;color:#16a34a;font-weight:700;margin-bottom:3px">${prop.price?formatPrice(prop.price):"가격 미입력"}</p>
+                ${prop.size?`<div style="font-size:11px;color:#1d4ed8;margin-bottom:5px">${prop.size}평${prop.constructionYear?" · "+prop.constructionYear+"년":""}</div>`:""}
+                <p style="font-size:10px;color:#94a3b8;margin-bottom:8px">📅 ${prop.visitDate||""}</p>
+                <div onclick="(function(){if(window.__mapGoDetail)window.__mapGoDetail('${prop.id}');})()"
+                  style="padding:6px 0;background:#1d4ed8;color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;text-align:center">
+                  상세보기 →
+                </div>
               </div>`,
-              position: pos, yAnchor: 1.45, zIndex: 3
+                            position: pos, yAnchor: 1.45, zIndex: 3
             });
             // 항상 보이는 이름 라벨
             const label = new kakao.maps.CustomOverlay({
@@ -567,6 +573,13 @@
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {prop.aiSummary && (
+            <div className="card" style={{padding:20,marginBottom:16,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
+              <p className="section-label" style={{marginBottom:8}}>🤖 AI 임장 평가</p>
+              <p style={{fontSize:14,color:"#0f172a",lineHeight:1.7}}>{prop.aiSummary}</p>
             </div>
           )}
 
@@ -708,6 +721,35 @@
 
 
 
+
+    /* ─── AI 요약 생성 ─── */
+    async function generateAiSummary(prop) {
+      if (!IS_CLAUDE) return "";
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": ANTHROPIC_KEY,
+            "anthropic-version": "2023-06-01",
+            "anthropic-dangerous-direct-browser-use": "true"
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: 150,
+            messages: [{ role: "user", content:
+              `아파트 임장 평가를 50자 이내 한 문장으로 작성해주세요. 핵심 장단점 위주로.\n\n` +
+              `아파트: ${prop.buildingName} / 가격: ${formatPrice(prop.price)} / ${prop.size}평 / ${prop.constructionYear}년\n` +
+              `위치: ${prop.address} / 인프라: ${prop.infrastructure.map(i=>i.label).join(", ")||"정보없음"}\n` +
+              `메모: ${prop.memo||"없음"}\n\n한 문장만 출력하세요.`
+            }]
+          })
+        });
+        const data = await res.json();
+        return data.content?.[0]?.text?.slice(0, 80) || "";
+      } catch(e) { return ""; }
+    }
+
     /* ─── PRICE CHART ─── */
     function PriceChart({ prop }) {
       const [loading,  setLoading]  = useState(false);
@@ -737,22 +779,40 @@
           const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
           const ym = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}`;
           try {
-            const proxy = `https://corsproxy.io/?url=${encodeURIComponent(
-              `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${GOV_API_KEY}&LAWD_CD=${prop.dongCode}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1`
-            )}`;
-            const res = await fetch(proxy);
-            const xml = await res.text();
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(xml, "text/xml");
-            const items = doc.querySelectorAll("item");
+            const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(GOV_API_KEY)}&LAWD_CD=${prop.dongCode}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1&_type=json`;
+            const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
+            const res  = await fetch(proxy);
+            const json = await res.json();
+            const xmlStr = json.contents || "";
+            const xml = xmlStr;
+            let items = [];
+            try {
+              const parsed = JSON.parse(xml);
+              const arr = parsed?.response?.body?.items?.item;
+              if (Array.isArray(arr)) {
+                items = arr.map(i => ({
+                  querySelector: (tag) => ({textContent: i[tag]||""})
+                }));
+              } else if (arr) {
+                items = [{ querySelector: (tag) => ({textContent: arr[tag]||""}) }];
+              }
+            } catch {
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(xml, "text/xml");
+              items = Array.from(doc.querySelectorAll("item")).map(el => ({
+                querySelector: (tag) => el.querySelector(tag)
+              }));
+            }
             items.forEach(item => {
-              const name = item.querySelector("아파트")?.textContent?.trim() || "";
-              const area = parseFloat(item.querySelector("전용면적")?.textContent || "0");
-              const price = parseInt((item.querySelector("거래금액")?.textContent || "0").replace(/,/g,""));
-              const year  = item.querySelector("년")?.textContent;
-              const month = item.querySelector("월")?.textContent;
-              if (name.includes(prop.buildingName.slice(0,4))) {
-                results.push({ ym, year, month, area: Math.round(area/3.305), price: price/10000 });
+              const getText = (tag) => (item.querySelector(tag)?.textContent || "").trim();
+              const name  = getText("아파트");
+              const area  = parseFloat(getText("전용면적") || "0");
+              const price = parseInt((getText("거래금액") || "0").replace(/[^0-9]/g,""));
+              const year  = getText("년") || getText("dealYear");
+              const month = getText("월") || getText("dealMonth");
+              const nameKey = prop.buildingName.replace(/\s/g,"").slice(0,4);
+              if (name && (name.includes(nameKey) || nameKey.includes(name.slice(0,4)))) {
+                results.push({ ym, year, month, area: Math.round(area/3.305)||Math.round(area), price: price/10000 });
               }
             });
           } catch(e) {}
@@ -898,6 +958,23 @@
             </div>
           </>)}
         </div>
+      );
+    }
+
+
+    function AiSummaryBtn({ form, onResult }) {
+      const [loading, setLoading] = useState(false);
+      return (
+        <button className="btn-secondary" disabled={loading}
+          style={{fontSize:12,padding:"5px 12px",opacity:loading?.6:1}}
+          onClick={async()=>{
+            setLoading(true);
+            const txt = await generateAiSummary(form);
+            if(txt) onResult(txt);
+            setLoading(false);
+          }}>
+          {loading ? "생성 중..." : "✨ 생성"}
+        </button>
       );
     }
 
@@ -1142,6 +1219,17 @@
             <MediaEditor items={form.mediaLinks} onChange={v=>set("mediaLinks",v)} />
           </div>
 
+          {/* AI 요약 */}
+          {IS_CLAUDE && (
+            <div className="card" style={{padding:20,marginBottom:12,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:form.aiSummary?10:0}}>
+                <p style={{fontSize:13,fontWeight:600,color:"#0369a1"}}>🤖 AI 임장 평가 (50자)</p>
+                <AiSummaryBtn form={form} onResult={v=>set("aiSummary",v)} />
+              </div>
+              {form.aiSummary && <p style={{fontSize:13,color:"#0f172a",lineHeight:1.6}}>{form.aiSummary}</p>}
+            </div>
+          )}
+
           <div className="card" style={{padding:26,marginBottom:28}}>
             <p className="section-label">메모 / 기타</p>
             <textarea className="textarea-field" placeholder="추가적인 인상, 단점, 특이사항 등을 자유롭게 적어주세요"
@@ -1163,17 +1251,19 @@
       const [view,        setView]        = useState("list");
       const [selected,    setSelected]    = useState(null);
       const [editing,     setEditing]     = useState(null);
-      const [sidebarOpen, setSidebarOpen] = useState(false);
-      const [isMobile,    setIsMobile]    = useState(false);
+      const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900);
+      const [isMobile,    setIsMobile]    = useState(window.innerWidth <= 900);
       const [myIp,        setMyIp]        = useState("");
       const [adminOpen,   setAdminOpen]   = useState(false);
 
       useEffect(() => {
-        const mq = window.matchMedia("(max-width: 900px)");
-        setIsMobile(mq.matches);
-        const h = (e) => setIsMobile(e.matches);
-        mq.addEventListener("change", h);
-        return () => mq.removeEventListener("change", h);
+        const h = () => {
+          const mobile = window.innerWidth <= 900;
+          setIsMobile(mobile);
+          if (mobile) setSidebarOpen(false);
+        };
+        window.addEventListener("resize", h);
+        return () => window.removeEventListener("resize", h);
       }, []);
 
       /* IP 트래킹 */
@@ -1253,38 +1343,66 @@
       if (!auth) return <PasswordGate onSuccess={()=>setAuth(true)} />;
 
       return (
-        <div style={{display:"flex",minHeight:"100vh"}}>
+        <div style={{display:"flex",minHeight:"100vh",position:"relative"}}>
           <FontLoader />
 
-          {/* 데스크탑 사이드바 */}
-          <div className="sidebar-col" style={{background:"#0c1829"}}>
-            <Sidebar view={view} setView={go} count={properties.length}
-              onAdd={()=>{setEditing(null);setView("form");}} onClose={()=>{}} />
-          </div>
+          {/* 사이드바 오버레이 (모바일 백드롭) */}
+          {sidebarOpen && isMobile && (
+            <div onClick={()=>setSidebarOpen(false)}
+              style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:40}} />
+          )}
 
-          {/* 모바일 오버레이 사이드바 */}
-          {sidebarOpen && <>
-            <div className="mob-overlay" onClick={()=>setSidebarOpen(false)} />
-            <div className="mob-sidebar">
-              <button onClick={()=>setSidebarOpen(false)} style={{alignSelf:"flex-end",background:"transparent",border:"none",color:"#94a3b8",fontSize:22,cursor:"pointer",marginBottom:8}}>✕</button>
-              <Sidebar view={view} setView={v=>{go(v);setSidebarOpen(false);}} count={properties.length}
-                onAdd={()=>{setEditing(null);setView("form");setSidebarOpen(false);}} onClose={()=>setSidebarOpen(false)} />
+          {/* 사이드바 - fixed 포지션, 토글 */}
+          {sidebarOpen && (
+            <div style={{
+              position:"fixed",top:0,left:0,bottom:0,width:220,
+              background:"#0c1829",zIndex:50,display:"flex",
+              flexDirection:"column",padding:"20px 12px",overflowY:"auto",
+              boxShadow:"4px 0 20px rgba(0,0,0,.3)"
+            }}>
+              {/* X 닫기 버튼 */}
+              <button onClick={()=>setSidebarOpen(false)}
+                style={{alignSelf:"flex-end",background:"transparent",border:"none",
+                  color:"#64748b",fontSize:20,cursor:"pointer",marginBottom:8,lineHeight:1,padding:4}}>✕</button>
+              <Sidebar view={view} setView={v=>{go(v); if(isMobile) setSidebarOpen(false);}}
+                count={properties.length}
+                onAdd={()=>{setEditing(null);setView("form"); if(isMobile) setSidebarOpen(false);}}
+                onClose={()=>setSidebarOpen(false)} />
             </div>
-          </>}
+          )}
 
-          <main className="main-col">
-            {/* 모바일 상단 바 */}
-            <div className="mob-topbar">
-              <button onClick={()=>setSidebarOpen(true)} style={{background:"transparent",border:"none",color:"#fff",fontSize:22,cursor:"pointer",lineHeight:1,padding:4}}>☰</button>
+          {/* 메인 콘텐츠 - 데스크탑에서 사이드바 열리면 오른쪽으로 밀림 */}
+          <main style={{
+            flex:1, minWidth:0, overflow:"auto", background:"#f0f4f9",
+            marginLeft: sidebarOpen && !isMobile ? 220 : 0,
+            transition:"margin-left .25s ease"
+          }}>
+            {/* 상단 바 - 항상 표시 (☰ 버튼) */}
+            <div style={{
+              display:"flex",alignItems:"center",gap:12,padding:"12px 16px",
+              background:"#0c1829",position:"sticky",top:0,zIndex:30,
+              boxShadow:"0 2px 8px rgba(0,0,0,.2)"
+            }}>
+              <button onClick={()=>setSidebarOpen(v=>!v)}
+                style={{background:"transparent",border:"none",color:"#fff",
+                  fontSize:22,cursor:"pointer",lineHeight:1,padding:"2px 6px",
+                  borderRadius:6,transition:"background .2s"}}
+                title={sidebarOpen?"메뉴 닫기":"메뉴 열기"}>☰</button>
               <span style={{color:"#fff",fontWeight:700,fontSize:15,flex:1}}>🏠 임장 히스토리</span>
-              <button onClick={()=>{setEditing(null);setView("form");}} style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+ 추가</button>
+              <button onClick={()=>{setEditing(null);setView("form");setSidebarOpen(false);}}
+                style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,
+                  padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+ 추가</button>
             </div>
+
+            {/* 콘텐츠 */}
             {view==="list" && <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />}
-            {view==="map"  && <MapView properties={properties} />}
+            {view==="map"  && <MapView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} />}
             {view==="admin" && <AdminView onBack={()=>setView("list")} myIp={myIp} />}
             {view==="detail" && selected && <DetailView prop={selected} onEdit={()=>{setEditing(selected);setView("form");}} onDelete={()=>deleteProp(selected.id)} onBack={()=>go("list")} />}
             {view==="form" && <PropertyForm initial={editing} onSave={saveProp} onCancel={()=>{setEditing(null);setView(editing?"detail":"list");}} />}
           </main>
+          </main>
+        </div>
         </div>
       );
     }
