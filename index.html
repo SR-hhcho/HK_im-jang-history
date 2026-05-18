@@ -11,6 +11,7 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-storage-compat.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Noto Sans KR', sans-serif; background: #f0f4f9; color: #1e293b; -webkit-font-smoothing: antialiased; }
@@ -95,7 +96,8 @@
 
     if (window.IS_FB) {
       firebase.initializeApp(FIREBASE_CONFIG);
-      window.db = firebase.firestore();
+      window.db  = firebase.firestore();
+      window.fbs = firebase.storage();
     }
   </script>
 
@@ -159,6 +161,25 @@
 
 
     const GEMINI_KEY = "AIzaSyAPTvEyADUgsUpWozjZ7XZLZLSnwhiSZWI";
+
+    const DEFAULT_WEIGHTS = {
+      "역세권":   20,
+      "학군":     20,
+      "교통":     15,
+      "편의시설": 15,
+      "자연환경": 10,
+      "주차":     10,
+      "단지규모": 5,
+      "브랜드":   5,
+    };
+
+    // Firestore에서 가중치 로드 (없으면 기본값 사용)
+    let locationWeights = {...DEFAULT_WEIGHTS};
+    if (window.IS_FB) {
+      window.db.collection("settings").doc("location_weights").get()
+        .then(doc => { if (doc.exists) locationWeights = doc.data(); })
+        .catch(() => {});
+    }
     const IS_AI = true;
     const GOV_API_KEY = "b33c6e5b219113eef5c49208c9cf1e1bda30843f7939c1377215c335cd73beff"; // data.go.kr 공공데이터 API 키
     const IS_GOV_API  = GOV_API_KEY !== "YOUR_DATA_GO_KR_API_KEY";
@@ -203,9 +224,12 @@
       nearbyStation:"", constructionYear:"",
       infrastructure:[], mediaLinks:[], memo:"",
       lat: null, lng: null,
-      propertyType: "임장",   // "임장" | "관심매물"
-      dongCode: "",           // 5자리 법정동코드 (실거래가 API용)
+      propertyType: "임장",
+      dongCode: "",
       aiSummary: "",
+      aiRating: null,          // Gemini 별점 (1~5)
+      aiScores: {},            // 항목별 점수
+      userRating: null,        // 사용자 별점 (1~5)
       visitDate: new Date().toISOString().slice(0,10),
       createdAt: new Date().toISOString(),
     });
@@ -459,10 +483,18 @@
             });
             // 항상 보이는 이름 라벨
             const label = new kakao.maps.CustomOverlay({
-              content: `<div style="background:rgba(15,23,42,0.82);color:#fff;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.3);text-align:center;line-height:1.5;border-left:3px solid ${prop.propertyType==='관심매물'?'#f59e0b':'#2563eb'}">
-                <div>${prop.buildingName||"이름없음"}</div>
-                ${prop.price?`<div style="color:#86efac;font-size:9px">${formatPrice(prop.price)}</div>`:""}
-              </div>`,
+              content: (()=>{
+                const showRating = prop.userRating || prop.aiRating;
+                const ratingVal  = prop.userRating || prop.aiRating;
+                const isUser     = !!prop.userRating;
+                const stars = ratingVal ? "★".repeat(Math.round(ratingVal)) + "☆".repeat(5-Math.round(ratingVal)) : "";
+                const starColor = isUser ? "#f59e0b" : "#93c5fd";
+                return `<div style="background:rgba(15,23,42,0.88);color:#fff;padding:4px 9px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.35);text-align:center;line-height:1.6;border-left:3px solid ${prop.propertyType==='관심매물'?'#f59e0b':'#2563eb'}">
+                  <div>${prop.buildingName||"이름없음"}</div>
+                  ${ratingVal?`<div style="color:${starColor};font-size:10px">${stars} ${Number(ratingVal).toFixed(1)}</div>`:""}
+                  ${prop.price&&!ratingVal?`<div style="color:#86efac;font-size:9px">${formatPrice(prop.price)}</div>`:""}
+                </div>`;
+              })(),
               position: pos, yAnchor: -0.2, zIndex: 2
             });
             label.setMap(map);
@@ -517,18 +549,45 @@
 
     /* ─── DETAIL VIEW ─── */
     function DetailView({ prop, onEdit, onDelete, onBack }) {
-      const [confirmDel, setConfirmDel] = useState(false);
-      const [lightbox,   setLightbox]   = useState(null);
-      const [tab,        setTab]        = useState("인프라");
-      const [aiText,     setAiText]     = useState(prop.aiSummary||"");
-      const [aiLoading,  setAiLoading]  = useState(false);
+      const [confirmDel,  setConfirmDel]  = useState(false);
+      const [lightbox,    setLightbox]    = useState(null);
+      const [tab,         setTab]         = useState("인프라");
+      const [aiText,      setAiText]      = useState(prop.aiSummary||"");
+      const [aiRating,    setAiRating]    = useState(prop.aiRating||null);
+      const [aiScores,    setAiScores]    = useState(prop.aiScores||{});
+      const [userRating,  setUserRating]  = useState(prop.userRating||null);
+      const [aiLoading,   setAiLoading]   = useState(false);
+
+      // 사용자 별점 저장
+      const saveUserRating = async (r) => {
+        setUserRating(r);
+        if (!window.IS_FB) return;
+        window.db.collection("properties").doc(prop.id).update({ userRating: r });
+      };
+
+      // 자동 AI 평가
+      useEffect(() => {
+        if (!prop.aiSummary && IS_AI) handleAI();
+      }, []);
 
       const yearAge = prop.constructionYear ? new Date().getFullYear()-parseInt(prop.constructionYear) : null;
 
       const handleAI = async () => {
         setAiLoading(true);
-        const txt = await generateAiSummary(prop);
-        if (txt) setAiText(txt);
+        const result = await generateAiSummary(prop);
+        if (result) {
+          setAiText(result.summary || "");
+          setAiRating(result.rating || null);
+          setAiScores(result.scores || {});
+          // Firebase에 저장
+          if (window.IS_FB) {
+            window.db.collection("properties").doc(prop.id).update({
+              aiSummary: result.summary||"",
+              aiRating:  result.rating||null,
+              aiScores:  result.scores||{}
+            }).catch(()=>{});
+          }
+        }
         setAiLoading(false);
       };
 
@@ -569,21 +628,44 @@
               {prop.nearbyStation && <div className="stat-box" style={{gridColumn:prop.size&&prop.constructionYear?"1/-1":undefined}}><p style={{fontSize:10,color:"#94a3b8",marginBottom:2}}>🚇 인근역</p><p style={{fontSize:13,fontWeight:600}}>{prop.nearbyStation}</p></div>}
             </div>
 
-            {/* AI 요약 */}
-            <div style={{background:"#f0f9ff",borderRadius:8,padding:"10px 12px",border:"1px solid #bae6fd"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
-                <p style={{fontSize:12,fontWeight:600,color:"#0369a1",flex:1}}>
-                  🤖 {aiText || (IS_AI ? "AI 임장 평가를 생성해보세요" : "AI 평가")}
-                </p>
-                {IS_AI && (
-                  <button className="btn-secondary" onClick={handleAI} disabled={aiLoading}
-                    style={{fontSize:11,padding:"4px 10px",flexShrink:0,opacity:aiLoading?.6:1}}>
-                    {aiLoading?"생성중...":"✨ 생성"}
-                  </button>
+            {/* AI + 사용자 별점 */}
+            <div style={{background:"#f0f9ff",borderRadius:10,padding:"10px 12px",border:"1px solid #bae6fd",marginBottom:8}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                <div style={{flex:1}}>
+                  {aiLoading
+                    ? <p style={{fontSize:12,color:"#0369a1"}}>🤖 AI 평가 생성 중...</p>
+                    : aiRating
+                      ? <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <Stars rating={aiRating} size={14} color="#2563eb" />
+                          <span style={{fontSize:10,color:"#64748b"}}>AI</span>
+                        </div>
+                      : null
+                  }
+                  {aiText && <p style={{fontSize:11,color:"#0f172a",marginTop:3,lineHeight:1.5}}>{aiText}</p>}
+                </div>
+                {IS_AI && !aiLoading && (
+                  <button className="btn-secondary" onClick={handleAI}
+                    style={{fontSize:10,padding:"3px 8px",flexShrink:0}}>{aiRating?"🔄":"✨"}</button>
                 )}
               </div>
+              {/* 항목별 점수 */}
+              {Object.keys(aiScores).length>0 && (
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,marginTop:6,paddingTop:6,borderTop:"1px solid #e0f2fe"}}>
+                  {Object.entries(aiScores).map(([k,v])=>(
+                    <span key={k} style={{fontSize:10,background:"#dbeafe",color:"#1d4ed8",padding:"2px 6px",borderRadius:10,fontWeight:600}}>
+                      {k} {Number(v).toFixed(1)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
-            <p style={{fontSize:11,color:"#94a3b8",marginTop:6}}>📅 임장일: {prop.visitDate}</p>
+
+            {/* 사용자 별점 */}
+            <div style={{background:"#fffbeb",borderRadius:10,padding:"10px 12px",border:"1px solid #fde68a",marginBottom:6}}>
+              <p style={{fontSize:11,fontWeight:600,color:"#92400e",marginBottom:6}}>⭐ 내 별점</p>
+              <StarInput value={userRating} onChange={saveUserRating} />
+            </div>
+            <p style={{fontSize:11,color:"#94a3b8"}}>📅 임장일: {prop.visitDate}</p>
           </div>
 
           {/* 탭 바 */}
@@ -727,9 +809,12 @@
 
     /* ─── MEDIA EDITOR ─── */
     function MediaEditor({ items, onChange }) {
-      const [url,  setUrl]  = useState("");
-      const [type, setType] = useState("photo");
-      const [desc, setDesc] = useState("");
+      const [url,       setUrl]       = useState("");
+      const [type,      setType]      = useState("photo");
+      const [desc,      setDesc]      = useState("");
+      const [uploading, setUploading] = useState(false);
+      const [progress,  setProgress]  = useState(0);
+      const fileRef = React.useRef(null);
 
       const add = () => {
         if (!url.trim()) return;
@@ -737,6 +822,29 @@
         setUrl(""); setDesc("");
       };
       const remove = (id) => onChange(items.filter(i=>i.id!==id));
+
+      const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!window.fbs) { alert("Firebase Storage가 연결되지 않았습니다.\nFirebase Console → Storage를 활성화해주세요."); return; }
+        setUploading(true); setProgress(0);
+        try {
+          const isVideo   = file.type.startsWith("video");
+          const storePath = `media/${uid()}_${file.name}`;
+          const ref       = window.fbs.ref(storePath);
+          const task      = ref.put(file);
+          task.on("state_changed", snap => {
+            setProgress(Math.round(snap.bytesTransferred/snap.totalBytes*100));
+          });
+          await task;
+          const dlUrl = await ref.getDownloadURL();
+          onChange([...items, {id:uid(), type:isVideo?"video":"photo", url:dlUrl, desc:file.name}]);
+        } catch(err) {
+          alert("업로드 실패: " + err.message);
+        }
+        setUploading(false); setProgress(0);
+        if (fileRef.current) fileRef.current.value = "";
+      };
 
       return (
         <div>
@@ -774,26 +882,65 @@
 
 
 
+
+    /* ─── STARS ─── */
+    function Stars({ rating, size=16, color="#f59e0b" }) {
+      if (!rating) return null;
+      const full = Math.floor(rating);
+      const half = (rating % 1) >= 0.4;
+      const empty = 5 - full - (half ? 1 : 0);
+      return (
+        <span style={{color, fontSize:size, lineHeight:1, letterSpacing:1}}>
+          {"★".repeat(full)}{half?"½":""}{"☆".repeat(empty)}
+          <span style={{fontSize:size*0.75, marginLeft:4, fontWeight:700}}>{rating.toFixed(1)}</span>
+        </span>
+      );
+    }
+
+    function StarInput({ value, onChange }) {
+      const [hover, setHover] = useState(0);
+      return (
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          {[1,2,3,4,5].map(n=>(
+            <span key={n}
+              onMouseEnter={()=>setHover(n)} onMouseLeave={()=>setHover(0)}
+              onClick={()=>onChange(value===n?null:n)}
+              style={{fontSize:28,cursor:"pointer",color:(hover||value)>=n?"#f59e0b":"#e2e8f0",lineHeight:1,transition:"color .15s"}}>
+              ★
+            </span>
+          ))}
+          {value && <span style={{fontSize:12,color:"#64748b",marginLeft:4}}>{value}.0점</span>}
+          {value && <button onClick={()=>onChange(null)} style={{fontSize:11,color:"#94a3b8",background:"transparent",border:"none",cursor:"pointer"}}>초기화</button>}
+        </div>
+      );
+    }
+
     /* ─── AI 요약 생성 ─── */
     async function generateAiSummary(prop) {
-      if (!IS_AI) return "";
+      if (!IS_AI) return null;
       try {
+        const weights = locationWeights;
+        const weightStr = Object.entries(weights).map(([k,v])=>`${k}: ${v}점`).join(", ");
         const prompt =
-          `부동산 임장 평가를 50자 이내 한 문장으로 작성해주세요. 핵심 장단점 위주로.\n` +
-          `아파트: ${prop.buildingName} / 가격: ${formatPrice(prop.price)} / ${prop.size}평 / ${prop.constructionYear}년\n` +
-          `위치: ${prop.address} / 인프라: ${prop.infrastructure.map(i=>i.label).join(", ")||"정보없음"}\n` +
-          `메모: ${prop.memo||"없음"}\n한 문장만 출력하세요.`;
+          `다음 아파트를 입지평가 기준으로 분석하고 JSON만 반환하세요.\n\n` +
+          `[입지평가 가중치] ${weightStr}\n` +
+          `[아파트 정보] 이름: ${prop.buildingName} / 주소: ${prop.address} / ` +
+          `가격: ${formatPrice(prop.price)||"미입력"} / ${prop.size||"?"}평 / ${prop.constructionYear||"?"}년 준공\n` +
+          `인프라: ${prop.infrastructure.map(i=>i.label+(i.note?" ("+i.note+")":"")).join(", ")||"정보없음"}\n` +
+          `메모: ${prop.memo||"없음"}\n\n` +
+          `JSON 형식만 출력 (한국어, 다른 텍스트 없이):
+{"rating":4.2,"summary":"50자이내 핵심 한 문장","scores":{"역세권":4.5,"학군":4.0,"교통":4.2,"편의시설":3.8,"자연환경":3.5,"주차":3.0,"단지규모":4.0,"브랜드":3.5}}`;
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-          }
+          { method:"POST", headers:{"content-type":"application/json"},
+            body: JSON.stringify({contents:[{parts:[{text:prompt}]}],
+              generationConfig:{responseMimeType:"application/json"}}) }
         );
         const data = await res.json();
-        return (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim().slice(0, 80);
-      } catch(e) { return ""; }
+        const text = (data.candidates?.[0]?.content?.parts?.[0]?.text||"").trim();
+        const json = JSON.parse(text.replace(/```json?|```/g,"").trim());
+        return json;
+      } catch(e) { console.error("AI error:",e); return null; }
     }
 
     /* ─── PRICE CHART ─── */
@@ -1063,6 +1210,24 @@
         return `${Math.floor(h/24)}일 전`;
       };
 
+      const [adminTab, setAdminTab] = useState("방문자");
+      const [weights,  setWeights]  = useState({...DEFAULT_WEIGHTS});
+      const [wLoaded,  setWLoaded]  = useState(false);
+
+      useEffect(() => {
+        if (!authed || !window.IS_FB || wLoaded) return;
+        window.db.collection("settings").doc("location_weights").get()
+          .then(doc => { if(doc.exists) setWeights(doc.data()); setWLoaded(true); })
+          .catch(() => setWLoaded(true));
+      }, [authed]);
+
+      const saveWeights = async () => {
+        if (!window.IS_FB) return alert("Firebase 필요");
+        await window.db.collection("settings").doc("location_weights").set(weights);
+        locationWeights = {...weights};
+        alert("저장됐습니다!");
+      };
+
       if (!authed) return (
         <div style={{padding:"36px 32px",maxWidth:440,margin:"0 auto"}} className="fade-up">
           <button className="btn-secondary" onClick={onBack} style={{marginBottom:24,fontSize:13}}>← 돌아가기</button>
@@ -1087,6 +1252,39 @@
             <h1 style={{fontSize:26,fontWeight:800,color:"#0f172a"}}>관리자 페이지</h1>
             <p style={{fontSize:14,color:"#64748b",marginTop:5}}>접속 기록 및 사용자 관리</p>
           </div>
+
+          {/* 관리자 탭 선택 */}
+          <div style={{display:"flex",gap:8,marginBottom:20}}>
+            {["방문자","입지평가 설정"].map(t=>(
+              <button key={t} onClick={()=>setAdminTab(t)}
+                className={adminTab===t?"btn-primary":"btn-secondary"}
+                style={{fontSize:13,padding:"8px 16px"}}>{t}</button>
+            ))}
+          </div>
+
+          {adminTab==="입지평가 설정" ? (
+            <div className="card" style={{padding:24}}>
+              <p className="section-label">AI 입지평가 가중치 설정</p>
+              <p style={{fontSize:12,color:"#64748b",marginBottom:16}}>총합이 100이 되도록 설정하세요. Gemini AI가 이 기준으로 별점을 매깁니다.</p>
+              {Object.entries(weights).map(([key, val])=>(
+                <div key={key} style={{marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:600}}>{key}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:"#1d4ed8"}}>{val}점</span>
+                  </div>
+                  <input type="range" min={0} max={50} value={val}
+                    onChange={e=>setWeights(w=>({...w,[key]:parseInt(e.target.value)}))}
+                    style={{width:"100%",accentColor:"#1d4ed8"}} />
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,paddingTop:12,borderTop:"1px solid #f1f5f9"}}>
+                <span style={{fontSize:13,color: Object.values(weights).reduce((a,b)=>a+b,0)===100?"#16a34a":"#dc2626",fontWeight:700}}>
+                  합계: {Object.values(weights).reduce((a,b)=>a+b,0)}점 {Object.values(weights).reduce((a,b)=>a+b,0)===100?"✅":"⚠️ 100이 되어야 해요"}
+                </span>
+                <button className="btn-primary" onClick={saveWeights} style={{fontSize:13}}>저장</button>
+              </div>
+            </div>
+          ) : (<>
 
           {/* 내 IP */}
           <div className="card" style={{padding:20,marginBottom:16,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
