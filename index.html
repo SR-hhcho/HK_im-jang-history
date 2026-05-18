@@ -78,6 +78,13 @@
 
     /* ─── CONSTANTS ─── */
     const PASS = "1234";
+    const GOV_API_KEY = "YOUR_DATA_GO_KR_API_KEY"; // data.go.kr 공공데이터 API 키
+    const IS_GOV_API  = GOV_API_KEY !== "YOUR_DATA_GO_KR_API_KEY";
+
+    // 모바일 미리보기 (URL ?mobile=true)
+    const URL_PARAMS    = new URLSearchParams(window.location.search);
+    const MOBILE_PREVIEW = URL_PARAMS.get("mobile") === "true";
+    // Galaxy S25 CSS 기준 크기: 360×780
 
     const INFRA_SUGGESTIONS = [
       "주차장","초등학교","중학교","고등학교","어린이집","유치원",
@@ -114,6 +121,9 @@
       nearbyStation:"", constructionYear:"",
       infrastructure:[], mediaLinks:[], memo:"",
       lat: null, lng: null,
+      propertyType: "임장",   // "임장" | "관심매물"
+      dongCode: "",           // 5자리 법정동코드 (실거래가 API용)
+      aiSummary: "",
       visitDate: new Date().toISOString().slice(0,10),
       createdAt: new Date().toISOString(),
     });
@@ -219,9 +229,16 @@
               </div>
             </>)}
           </div>
-          <h3 style={{fontWeight:700,fontSize:16,color:"#0f172a",marginBottom:5,paddingRight:36,lineHeight:1.35}}>
-            {prop.buildingName || <span style={{color:"#94a3b8"}}>이름 없음</span>}
-          </h3>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5,paddingRight:36}}>
+            <h3 style={{fontWeight:700,fontSize:16,color:"#0f172a",lineHeight:1.35,flex:1}}>
+              {prop.buildingName || <span style={{color:"#94a3b8"}}>이름 없음</span>}
+            </h3>
+            <span style={{fontSize:10,fontWeight:700,padding:"2px 7px",borderRadius:10,flexShrink:0,
+              background:prop.propertyType==="관심매물"?"#fef9c3":"#dbeafe",
+              color:prop.propertyType==="관심매물"?"#a16207":"#1d4ed8"}}>
+              {prop.propertyType==="관심매물"?"👁 관심":"🏃 임장"}
+            </span>
+          </div>
           <p style={{fontSize:13,color:"#64748b",marginBottom:14}}>{prop.address||"주소 없음"}</p>
           <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:14}}>
             {prop.size             && <span className="tag tag-blue">{prop.size}평</span>}
@@ -247,10 +264,12 @@
 
     /* ─── LIST VIEW ─── */
     function ListView({ properties, onSelect, onEdit, onDelete, onAdd }) {
-      const [q, setQ]       = useState("");
+      const [q,    setQ]    = useState("");
       const [sort, setSort] = useState("newest");
+      const [typeFilter, setTypeFilter] = useState("전체");
 
       const list = properties
+        .filter(p => typeFilter==="전체" || (p.propertyType||"임장")===typeFilter)
         .filter(p=>!q||p.buildingName.includes(q)||p.address.includes(q))
         .sort((a,b)=>{
           if(sort==="newest") return new Date(b.createdAt)-new Date(a.createdAt);
@@ -274,6 +293,17 @@
                 <option value="size">평수순</option>
               </select>
             </div>
+          </div>
+          <div style={{display:"flex",gap:8,marginBottom:20}}>
+            {["전체","임장","관심매물"].map(t=>(
+              <button key={t} onClick={()=>setTypeFilter(t)}
+                style={{padding:"6px 16px",borderRadius:20,border:"1.5px solid",cursor:"pointer",fontSize:13,fontWeight:600,transition:"all .2s",
+                  borderColor:typeFilter===t?"#1d4ed8":"#e2e8f0",
+                  background:typeFilter===t?"#1d4ed8":"#fff",
+                  color:typeFilter===t?"#fff":"#64748b"}}>
+                {t==="전체"?`전체 ${properties.length}`:t==="임장"?`🏃 임장 ${properties.filter(p=>(p.propertyType||"임장")==="임장").length}`:`👁 관심 ${properties.filter(p=>p.propertyType==="관심매물").length}`}
+              </button>
+            ))}
           </div>
           {properties.length===0 ? (
             <div className="card" style={{padding:"72px 40px",textAlign:"center"}}>
@@ -342,7 +372,10 @@
             });
             // 항상 보이는 이름 라벨
             const label = new kakao.maps.CustomOverlay({
-              content: `<div style="background:rgba(15,23,42,0.82);color:#fff;padding:3px 8px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.3)">${prop.buildingName||"이름없음"}</div>`,
+              content: `<div style="background:rgba(15,23,42,0.88);color:#fff;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap;pointer-events:none;box-shadow:0 2px 8px rgba(0,0,0,.35);text-align:center;line-height:1.5">
+                <div>${prop.buildingName||"이름없음"}</div>
+                ${prop.price?`<div style="color:#4ade80;font-size:10px">${formatPrice(prop.price)}</div>`:""}
+              </div>`,
               position: pos, yAnchor: -0.2, zIndex: 2
             });
             label.setMap(map);
@@ -475,13 +508,7 @@
             </div>
           )}
 
-          <div className="card" style={{padding:24,background:"#f8fafc",border:"2px dashed #dde4f0"}}>
-            <p className="section-label">실거래가 히스토리 (Step 3)</p>
-            <div style={{textAlign:"center",padding:"24px 0"}}>
-              <div style={{fontSize:32,marginBottom:10}}>📊</div>
-              <p style={{fontSize:13,color:"#94a3b8",lineHeight:1.7}}>국토부 실거래가 API 연동 후<br/>이 아파트의 <strong>최근 3년 매매 데이터</strong>가 그래프로 표시됩니다</p>
-            </div>
-          </div>
+          <PriceChart prop={prop} />
 
           {lightbox && (
             <div className="modal-overlay" onClick={()=>setLightbox(null)}>
@@ -609,6 +636,195 @@
       );
     }
 
+
+
+
+    /* ─── PRICE CHART ─── */
+    function PriceChart({ prop }) {
+      const [loading,  setLoading]  = useState(false);
+      const [txData,   setTxData]   = useState([]);
+      const [error,    setError]    = useState("");
+      const [fetched,  setFetched]  = useState(false);
+      const chartRef = React.useRef(null);
+      const chartInst = React.useRef(null);
+
+      const fetchData = async () => {
+        if (!prop.dongCode || prop.dongCode.length !== 5) {
+          setError("법정동코드(5자리)를 먼저 수정 화면에서 입력해주세요");
+          return;
+        }
+        if (!IS_GOV_API) {
+          setError("data.go.kr API 키를 index.html 상단 GOV_API_KEY에 입력해주세요");
+          return;
+        }
+        setLoading(true); setError(""); setTxData([]);
+        const results = [];
+        const now = new Date();
+        for (let i = 0; i < 36; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+          const ym = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}`;
+          try {
+            const proxy = `https://corsproxy.io/?url=${encodeURIComponent(
+              `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${GOV_API_KEY}&LAWD_CD=${prop.dongCode}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1`
+            )}`;
+            const res = await fetch(proxy);
+            const xml = await res.text();
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(xml, "text/xml");
+            const items = doc.querySelectorAll("item");
+            items.forEach(item => {
+              const name = item.querySelector("아파트")?.textContent?.trim() || "";
+              const area = parseFloat(item.querySelector("전용면적")?.textContent || "0");
+              const price = parseInt((item.querySelector("거래금액")?.textContent || "0").replace(/,/g,""));
+              const year  = item.querySelector("년")?.textContent;
+              const month = item.querySelector("월")?.textContent;
+              if (name.includes(prop.buildingName.slice(0,4))) {
+                results.push({ ym, year, month, area: Math.round(area/3.305), price: price/10000 });
+              }
+            });
+          } catch(e) {}
+        }
+        results.sort((a,b)=>a.ym.localeCompare(b.ym));
+        setTxData(results);
+        setFetched(true);
+        setLoading(false);
+      };
+
+      useEffect(() => {
+        if (!fetched || txData.length===0 || !chartRef.current) return;
+        if (chartInst.current) chartInst.current.destroy();
+        const labels = [...new Set(txData.map(t=>`${t.year}.${String(t.month).padStart(2,"0")}`))];
+        const avgByMonth = labels.map(lbl => {
+          const items = txData.filter(t=>`${t.year}.${String(t.month).padStart(2,"0")}`===lbl);
+          return Math.round(items.reduce((s,i)=>s+i.price,0)/items.length);
+        });
+        chartInst.current = new Chart(chartRef.current, {
+          type:"line",
+          data:{
+            labels,
+            datasets:[{
+              label:"평균 실거래가 (만원)",
+              data:avgByMonth,
+              borderColor:"#1d4ed8",
+              backgroundColor:"rgba(29,78,216,.08)",
+              tension:0.3, fill:true,
+              pointBackgroundColor:"#1d4ed8", pointRadius:4
+            }]
+          },
+          options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false } },
+            scales:{
+              y:{ ticks:{ callback: v => v>=10000?`${Math.round(v/10000)}억`:v+"만" } },
+              x:{ ticks:{ maxRotation:45 } }
+            }
+          }
+        });
+      }, [txData, fetched]);
+
+      return (
+        <div className="card" style={{padding:24,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div>
+              <p className="section-label" style={{marginBottom:4}}>실거래가 히스토리 (최근 3년)</p>
+              {prop.dongCode ? <span className="tag tag-blue">법정동코드: {prop.dongCode}</span>
+                : <span className="tag tag-orange">⚠️ 수정 화면에서 법정동코드 입력 필요</span>}
+            </div>
+            <button className="btn-secondary" onClick={fetchData} disabled={loading}
+              style={{fontSize:13,padding:"8px 16px",opacity:loading?.6:1}}>
+              {loading?"조회 중...":"📊 조회하기"}
+            </button>
+          </div>
+          {error && <p style={{color:"#dc2626",fontSize:13,marginBottom:12,padding:"10px 14px",background:"#fee2e2",borderRadius:8}}>{error}</p>}
+          {!IS_GOV_API && !error && (
+            <div style={{padding:"20px",background:"#f8fafc",borderRadius:10,border:"2px dashed #e2e8f0",textAlign:"center"}}>
+              <p style={{fontSize:13,color:"#94a3b8",lineHeight:1.7}}>
+                📋 <strong>data.go.kr</strong>에서 <strong>"아파트매매 실거래 상세 자료"</strong> API 키 발급 후<br/>
+                index.html 상단 <code style={{background:"#f1f5f9",padding:"1px 6px",borderRadius:4}}>GOV_API_KEY</code> 에 입력하면 활성화됩니다
+              </p>
+            </div>
+          )}
+          {fetched && txData.length===0 && <p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>해당 아파트의 거래 데이터가 없습니다</p>}
+          {fetched && txData.length>0 && (
+            <div style={{height:280,position:"relative"}}><canvas ref={chartRef}></canvas></div>
+          )}
+          {fetched && txData.length>0 && (
+            <div style={{marginTop:16,maxHeight:200,overflowY:"auto"}}>
+              <p style={{fontSize:11,color:"#94a3b8",marginBottom:8}}>개별 거래 내역 ({txData.length}건)</p>
+              {txData.map((t,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #f8fafc",fontSize:12}}>
+                  <span style={{color:"#64748b"}}>{t.year}.{String(t.month).padStart(2,"0")}</span>
+                  <span style={{color:"#374151"}}>{t.area}평</span>
+                  <span style={{color:"#1d4ed8",fontWeight:600}}>{t.price.toLocaleString()}만원</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── APARTMENT SEARCH ─── */
+    function ApartmentSearch({ onSelect }) {
+      const [q, setQ]           = useState("");
+      const [results, setResults] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [open, setOpen]       = useState(false);
+
+      const search = () => {
+        if (!q.trim()) return;
+        if (!window.kakao || !window.kakao.maps) { alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요"); return; }
+        setLoading(true);
+        kakao.maps.load(() => {
+          const ps = new kakao.maps.services.Places();
+          ps.keywordSearch(q + " 아파트", (data, status) => {
+            setLoading(false);
+            if (status === kakao.maps.services.Status.OK) {
+              setResults(data.slice(0, 6));
+              setOpen(true);
+            } else {
+              setResults([]);
+            }
+          }, { size: 6 });
+        });
+      };
+
+      const pick = (r) => {
+        onSelect({
+          buildingName: r.place_name.replace(/\s*아파트$/,""),
+          address: r.road_address_name || r.address_name,
+          lat: parseFloat(r.y),
+          lng: parseFloat(r.x),
+        });
+        setQ(""); setResults([]); setOpen(false);
+      };
+
+      return (
+        <div style={{position:"relative"}}>
+          <div style={{display:"flex",gap:8}}>
+            <input className="input-field" placeholder="🔍 아파트명으로 검색" value={q}
+              onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()} style={{flex:1}} />
+            <button className="btn-secondary" onClick={search} style={{flexShrink:0,padding:"10px 16px",fontSize:13}}>
+              {loading ? "검색중..." : "검색"}
+            </button>
+          </div>
+          {open && results.length>0 && (<>
+            <div style={{position:"fixed",inset:0,zIndex:5}} onClick={()=>setOpen(false)} />
+            <div style={{position:"absolute",top:"calc(100%+6px)",left:0,right:0,background:"#fff",borderRadius:10,border:"1px solid #e2e8f0",boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:10,overflow:"hidden"}}>
+              {results.map(r=>(
+                <div key={r.id} onClick={()=>pick(r)}
+                  style={{padding:"12px 16px",cursor:"pointer",borderBottom:"1px solid #f8fafc",transition:"background .15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"}
+                  onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                  <p style={{fontWeight:600,fontSize:13,color:"#0f172a"}}>{r.place_name}</p>
+                  <p style={{fontSize:11,color:"#64748b",marginTop:2}}>{r.road_address_name||r.address_name}</p>
+                </div>
+              ))}
+            </div>
+          </>)}
+        </div>
+      );
+    }
 
     /* ─── ADMIN VIEW ─── */
     const ADMIN_PASS = "admin1234";
@@ -752,9 +968,37 @@
 
           <div className="card" style={{padding:26,marginBottom:16}}>
             <p className="section-label">기본 정보</p>
+
+            {/* 매물 타입 */}
+            <div style={{marginBottom:16}}>
+              <LBL>매물 유형</LBL>
+              <div style={{display:"flex",gap:8}}>
+                {["임장","관심매물"].map(t=>(
+                  <button key={t} type="button" onClick={()=>set("propertyType",t)}
+                    style={{padding:"8px 20px",borderRadius:20,border:"2px solid",cursor:"pointer",fontWeight:600,fontSize:13,
+                      borderColor:form.propertyType===t?"#1d4ed8":"#e2e8f0",
+                      background:form.propertyType===t?"#1d4ed8":"#fff",
+                      color:form.propertyType===t?"#fff":"#64748b",transition:"all .2s"}}>
+                    {t==="임장"?"🏃 임장완료":"👁 관심매물"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 아파트 검색 */}
+            <div style={{marginBottom:16}}>
+              <LBL>아파트명 검색 (주소·좌표 자동완성)</LBL>
+              <ApartmentSearch onSelect={r=>{
+                set("buildingName",r.buildingName);
+                set("address",r.address);
+                set("lat",r.lat);
+                set("lng",r.lng);
+              }} />
+            </div>
+
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
               <div><LBL>아파트명 *</LBL><input className="input-field" placeholder="예: 래미안 퍼스티지" value={form.buildingName} onChange={e=>set("buildingName",e.target.value)} /></div>
-              <div><LBL>임장일</LBL><input className="input-field" type="date" value={form.visitDate} onChange={e=>set("visitDate",e.target.value)} /></div>
+              <div><LBL>임장일 / 등록일</LBL><input className="input-field" type="date" value={form.visitDate} onChange={e=>set("visitDate",e.target.value)} /></div>
               <div style={{gridColumn:"1/-1"}}>
                 <LBL>주소</LBL>
                 <div style={{display:"flex",gap:8}}>
@@ -787,7 +1031,20 @@
                 {form.lat && <p style={{fontSize:11,color:"#16a34a",marginTop:4,fontWeight:600}}>✅ 지도 좌표 설정됨 ({form.lat.toFixed(4)}, {form.lng.toFixed(4)})</p>}
               </div>
               <div><LBL>평수 (전용면적)</LBL><input className="input-field" placeholder="예: 34" value={form.size} onChange={e=>set("size",e.target.value)} /></div>
-              <div><LBL>준공년도</LBL><input className="input-field" placeholder="예: 2010" value={form.constructionYear} onChange={e=>set("constructionYear",e.target.value)} /></div>
+              <div>
+                <LBL>준공년도</LBL>
+                <input className="input-field" placeholder="예: 2010" value={form.constructionYear} onChange={e=>set("constructionYear",e.target.value)} />
+                {form.constructionYear && parseInt(form.constructionYear)>1900 && (
+                  <p style={{fontSize:11,color:"#64748b",marginTop:4}}>{new Date().getFullYear()-parseInt(form.constructionYear)}년차</p>
+                )}
+              </div>
+              <div>
+                <LBL>법정동코드 (5자리, 실거래가용)</LBL>
+                <input className="input-field" placeholder="예: 11680 (강남구)" value={form.dongCode} onChange={e=>set("dongCode",e.target.value.replace(/[^0-9]/g,"").slice(0,5))} />
+                <p style={{fontSize:11,color:"#94a3b8",marginTop:4}}>
+                  <a href="https://www.code.go.kr/stdcode/regCodeL.do" target="_blank" rel="noreferrer" style={{color:"#3b82f6"}}>법정동코드 조회 →</a>
+                </p>
+              </div>
               <div>
                 <LBL>가격 (만원 단위)</LBL>
                 <input className="input-field" placeholder="예: 120000 → 12억원" value={form.price} onChange={e=>set("price",e.target.value.replace(/[^0-9]/g,""))} />
@@ -931,7 +1188,24 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    function MobilePreviewWrapper() {
+      if (!MOBILE_PREVIEW) return <App />;
+      return (
+        <div style={{minHeight:"100vh",background:"#1a1a2e",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"40px 20px",gap:20}}>
+          <div style={{position:"sticky",top:40}}>
+            <p style={{color:"#94a3b8",fontSize:12,marginBottom:8,textAlign:"center"}}>갤럭시 S25 미리보기</p>
+            <div style={{width:360,height:780,border:"8px solid #333",borderRadius:40,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.5)",background:"#fff",position:"relative"}}>
+              <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:80,height:8,background:"#333",borderRadius:"0 0 8px 8px",zIndex:10}}></div>
+              <div style={{width:"100%",height:"100%",overflowY:"auto",overflowX:"hidden"}}>
+                <App />
+              </div>
+            </div>
+            <p style={{color:"#475569",fontSize:11,textAlign:"center",marginTop:12}}>360 × 780 px</p>
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
   </script>
 </body>
 </html>
