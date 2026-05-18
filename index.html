@@ -49,25 +49,23 @@
     .firebase-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:600; }
     .firebase-on  { background:#dcfce7; color:#16a34a; }
     .firebase-off { background:#fef9c3; color:#a16207; }
-  /* ── 모바일 레이아웃 ── */
-  .sidebar-wrap     { width:220px; flex-shrink:0; }
-  .mob-topbar       { display:none; align-items:center; gap:12px; padding:13px 16px;
-                      background:#0c1829; position:sticky; top:0; z-index:30; }
-  .mob-backdrop     { display:none; position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:40; }
-  .mob-sidebar-wrap { display:none; position:fixed; top:0; left:0; bottom:0; width:260px;
-                      z-index:50; overflow-y:auto; }
+  /* ── 레이아웃 ── */
+  .sidebar-col  { width:220px; flex-shrink:0; }
+  .main-col     { flex:1; min-width:0; overflow:auto; background:#f0f4f9; }
+  .mob-topbar   { display:none; background:#0c1829; padding:13px 16px; align-items:center; gap:12px; position:sticky; top:0; z-index:30; }
+  .mob-sidebar  { position:fixed; top:0; left:0; bottom:0; width:260px; background:#0c1829; z-index:50; overflow-y:auto; display:flex; flex-direction:column; padding:24px 12px; box-shadow:4px 0 24px rgba(0,0,0,.4); }
+  .mob-overlay  { position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:40; }
   @media (max-width:900px) {
-    .sidebar-wrap          { display:none !important; }
-    .mob-topbar            { display:flex !important; }
-    .mob-backdrop.open     { display:block !important; }
-    .mob-sidebar-wrap.open { display:flex !important; flex-direction:column; }
+    .sidebar-col  { display:none !important; }
+    .mob-topbar   { display:flex !important; }
+    .mob-close-x  { display:block !important; }
   }
   @media (max-width:640px) {
-    .page-pad  { padding:16px 14px !important; }
-    .grid-2col { grid-template-columns:1fr !important; }
-    .card-grid { grid-template-columns:1fr !important; }
-    .detail-hdr { flex-direction:column !important; }
-    .stat-grid  { grid-template-columns:1fr 1fr !important; }
+    .page-pad    { padding:16px 14px !important; }
+    .grid-2col   { grid-template-columns:1fr !important; }
+    .card-grid   { grid-template-columns:1fr !important; }
+    .detail-hdr  { flex-direction:column !important; }
+    .stat-grid   { grid-template-columns:1fr 1fr !important; }
   }
   </style>
 </head>
@@ -1242,8 +1240,32 @@
 
       return (
         <div style={{display:"flex",minHeight:"100vh"}}>
-          <Sidebar view={view} setView={go} count={properties.length} onAdd={()=>{setEditing(null);setView("form");}} />
-          <main style={{flex:1,overflow:"auto",background:"#f0f4f9"}}>
+          <FontLoader />
+          <style>{CSS}</style>
+
+          {/* 데스크탑 사이드바 */}
+          <div className="sidebar-col" style={{background:"#0c1829"}}>
+            <Sidebar view={view} setView={go} count={properties.length}
+              onAdd={()=>{setEditing(null);setView("form");}} onClose={()=>{}} />
+          </div>
+
+          {/* 모바일 오버레이 사이드바 */}
+          {sidebarOpen && <>
+            <div className="mob-overlay" onClick={()=>setSidebarOpen(false)} />
+            <div className="mob-sidebar">
+              <button onClick={()=>setSidebarOpen(false)} style={{alignSelf:"flex-end",background:"transparent",border:"none",color:"#94a3b8",fontSize:22,cursor:"pointer",marginBottom:8}}>✕</button>
+              <Sidebar view={view} setView={v=>{go(v);setSidebarOpen(false);}} count={properties.length}
+                onAdd={()=>{setEditing(null);setView("form");setSidebarOpen(false);}} onClose={()=>setSidebarOpen(false)} />
+            </div>
+          </>}
+
+          <main className="main-col">
+            {/* 모바일 상단 바 */}
+            <div className="mob-topbar">
+              <button onClick={()=>setSidebarOpen(true)} style={{background:"transparent",border:"none",color:"#fff",fontSize:22,cursor:"pointer",lineHeight:1,padding:4}}>☰</button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15,flex:1}}>🏠 임장 히스토리</span>
+              <button onClick={()=>{setEditing(null);setView("form");}} style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+ 추가</button>
+            </div>
             {view==="list" && <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />}
             {view==="map"  && <MapView properties={properties} />}
             {view==="admin" && <AdminView onBack={()=>setView("list")} myIp={myIp} />}
