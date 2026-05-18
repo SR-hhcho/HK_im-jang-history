@@ -1051,8 +1051,7 @@
             {phase!=="playing"&&(
               <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
                 {phase==="dead"&&<><p style={{color:"#ef4444",fontSize:20,fontWeight:800}}>💥 GAME OVER</p><p style={{color:"#fff",fontSize:32,fontWeight:900}}>{score}점</p></>}
-                {phase==="ready"&&<p style={{color:"#fff",fontSize:15,textAlign:"center",padding:"0 20px"}}>파란 점이 플레이어!{"
-"}마우스/조이스틱으로 총알 피하세요</p>}
+                {phase==="ready"&&<p style={{color:"#fff",fontSize:15,textAlign:"center",padding:"0 20px"}}>파란 점이 플레이어! 마우스/조이스틱으로 총알 피하세요</p>}
                 <button className="btn-primary" onClick={start} style={{fontSize:15,padding:"10px 28px"}}>{phase==="dead"?"다시시작":"시작"}</button>
               </div>
             )}
