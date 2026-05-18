@@ -68,8 +68,8 @@
     .detail-hdr  { flex-direction:column !important; }
     .stat-grid   { grid-template-columns:1fr 1fr !important; }
   }
-  .map-box { height:300px; }
-  @media (max-width:640px) { .map-box { height:220px; } }
+  .map-box { height:500px; max-height:60vw; min-height:300px; }
+  @media (max-width:640px) { .map-box { height:calc(100vw - 28px); min-height:280px; } }
   .detail-wrap { display:flex; flex-direction:column; height:calc(100dvh - 48px); overflow:hidden; }
   .detail-scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; }
   .tab-bar { display:flex; background:#fff; border-bottom:1px solid #f1f5f9; flex-shrink:0; }
@@ -933,12 +933,15 @@
         const res = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_KEY}`,
           { method:"POST", headers:{"content-type":"application/json"},
-            body: JSON.stringify({contents:[{parts:[{text:prompt}]}],
-              generationConfig:{responseMimeType:"application/json"}}) }
+            body: JSON.stringify({contents:[{parts:[{text:prompt}]}]}) }
         );
+        if (!res.ok) { console.error("Gemini 오류:", res.status, await res.text()); return null; }
         const data = await res.json();
         const text = (data.candidates?.[0]?.content?.parts?.[0]?.text||"").trim();
-        const json = JSON.parse(text.replace(/```json?|```/g,"").trim());
+        // JSON 추출
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) { console.error("JSON 파싱 실패:", text); return {rating:null, summary:text.slice(0,80), scores:{}}; }
+        const json = JSON.parse(jsonMatch[0]);
         return json;
       } catch(e) { console.error("AI error:",e); return null; }
     }
@@ -966,17 +969,18 @@
           return;
         }
         setLoading(true); setError(""); setTxData([]);
+        let fetchErrors = 0;
         const results = [];
         const now = new Date();
         for (let i = 0; i < 36; i++) {
           const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
           const ym = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}`;
           try {
-            const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${encodeURIComponent(GOV_API_KEY)}&LAWD_CD=${prop.dongCode}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1&_type=json`;
-            const proxy = `https://api.allorigins.win/get?url=${encodeURIComponent(apiUrl)}`;
-            const res  = await fetch(proxy);
-            const json = await res.json();
-            const xmlStr = json.contents || "";
+            const apiUrl = `https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=${GOV_API_KEY}&LAWD_CD=${prop.dongCode}&DEAL_YMD=${ym}&numOfRows=100&pageNo=1`;
+            const proxy = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+            const res  = await fetch(proxy, {signal: AbortSignal.timeout(8000)});
+            if (!res.ok) continue;
+            const xmlStr = await res.text();
             const xml = xmlStr;
             let items = [];
             try {
@@ -1008,8 +1012,9 @@
                 results.push({ ym, year, month, area: Math.round(area/3.305)||Math.round(area), price: price/10000 });
               }
             });
-          } catch(e) {}
+          } catch(e) { fetchErrors++; }
         }
+        if (fetchErrors > 30) setError("CORS 프록시 연결 실패. 잠시 후 다시 시도해주세요.");
         results.sort((a,b)=>a.ym.localeCompare(b.ym));
         setTxData(results);
         setFetched(true);
@@ -1097,11 +1102,16 @@
       const [loading, setLoading] = useState(false);
       const [open, setOpen]       = useState(false);
 
+      const waitKakao = (cb, retry=0) => {
+        if (window.__kakaoReady && window.kakao && window.kakao.maps) { cb(); return; }
+        if (retry > 30) { alert("카카오맵 로드 실패. 페이지를 새로고침해주세요."); setLoading(false); return; }
+        setTimeout(() => waitKakao(cb, retry+1), 300);
+      };
+
       const search = () => {
         if (!q.trim()) return;
-        if (!window.kakao || !window.kakao.maps) { alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요"); return; }
         setLoading(true);
-        kakao.maps.load(() => {
+        waitKakao(() => {
           const ps = new kakao.maps.services.Places();
           ps.keywordSearch(q + " 아파트", (data, status) => {
             setLoading(false);
@@ -1110,6 +1120,7 @@
               setOpen(true);
             } else {
               setResults([]);
+              alert("검색 결과가 없습니다.");
             }
           }, { size: 6 });
         });
@@ -1404,11 +1415,9 @@
                   <button type="button" className="btn-secondary" style={{flexShrink:0,padding:"10px 14px",fontSize:13,display:"flex",alignItems:"center",gap:5}}
                     onClick={()=>{
                       if (!form.address.trim()) return alert("주소를 먼저 입력해주세요");
-                      if (!window.kakao || !window.kakao.maps) {
-                        const s = document.createElement('script');
-                        s.src='https://dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services&autoload=false';
-                        s.onload=()=>kakao.maps.load(()=>alert("지도 준비됐어요! 다시 📍 버튼 눌러주세요"));
-                        document.head.appendChild(s); return;
+                      if (!window.__kakaoReady) {
+                        alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요.");
+                        return;
                       }
                       kakao.maps.load(()=>{
                         const geocoder = new kakao.maps.services.Geocoder();
@@ -1509,6 +1518,17 @@
         };
         window.addEventListener("resize", h);
         return () => window.removeEventListener("resize", h);
+      }, []);
+
+      // 앱 시작 시 카카오맵 SDK 미리 로딩
+      useEffect(() => {
+        if (window.kakao && window.kakao.maps) { window.__kakaoReady = true; return; }
+        if (document.querySelector('script[data-kakao]')) return;
+        const s = document.createElement('script');
+        s.setAttribute('data-kakao', 'true');
+        s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services&autoload=false';
+        s.onload = () => kakao.maps.load(() => { window.__kakaoReady = true; });
+        document.head.appendChild(s);
       }, []);
 
       /* IP 트래킹 */
