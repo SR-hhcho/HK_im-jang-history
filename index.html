@@ -940,188 +940,37 @@
     /* ─── AI 요약 생성 ─── */
     async function generateAiSummary(prop) {
       if (!IS_AI) return null;
-      try {
-        const wStr = Object.entries(locationWeights).map(([k,v])=>k+":"+v+"점").join(",");
-        const infra = prop.infrastructure.map(i=>i.label).join(",") || "없음";
-        const prompt = "아파트 입지평가를 JSON으로만 응답하세요. 다른 텍스트 없이 JSON만. " +
-          "아파트:" + prop.buildingName + " 주소:" + prop.address + " " +
-          "가격:" + (formatPrice(prop.price)||"미입력") + " " + (prop.size||"?") + "평 " + (prop.constructionYear||"?") + "년준공 " +
-          "인프라:" + infra + " 가중치:" + wStr +
-          ' 응답형식: {"rating":4.2,"summary":"한줄평가50자이내","scores":{"역세권":4.5,"학군":4.0,"교통":4.2,"편의시설":3.8,"자연환경":3.5,"주차":3.0,"단지규모":4.0,"브랜드":3.5}}';
-        const res = await fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=" + GEMINI_KEY,
-          { method:"POST", headers:{"Content-Type":"application/json"},
-            body: JSON.stringify({contents:[{role:"user",parts:[{text:prompt}]}]}) }
-        );
-        if (!res.ok) { const e=await res.text(); console.error("Gemini err",res.status,e); return null; }
-        const data = await res.json();
-        const raw = (data.candidates?.[0]?.content?.parts?.[0]?.text||"").trim();
-        const m = raw.match(/\{[\s\S]*\}/);
-        if (!m) { console.warn("Gemini no JSON:", raw); return {rating:3.0, summary:raw.slice(0,80), scores:{}}; }
-        return JSON.parse(m[0]);
-      } catch(e) { console.error("AI err:",e); return null; }
-    }
-
-
-    /* ─── BULLET DODGE GAME ─── */
-    function BulletGame({ onBack, myIp }) {
-      const cvs  = React.useRef(null);
-      const loop = React.useRef(null);
-      const state= React.useRef({});
-      const [phase,     setPhase]     = useState("ready"); // ready|playing|dead
-      const [score,     setScore]     = useState(0);
-      const [bestScore, setBestScore] = useState(0);
-      const [board,     setBoard]     = useState([]);
-
-      // 리더보드 로드
-      useEffect(() => {
-        if (!window.IS_FB) return;
-        window.db.collection("game_scores").orderBy("score","desc").limit(10)
-          .onSnapshot(snap => setBoard(snap.docs.map(d=>({...d.data(),id:d.id}))));
-        if (myIp) {
-          const safeIp = myIp.replace(/\./g,"_");
-          window.db.collection("game_scores").doc(safeIp).get()
-            .then(doc => { if(doc.exists) setBestScore(doc.data().score||0); });
-        }
-      }, [myIp]);
-
-      const saveScore = async (s) => {
-        if (!window.IS_FB || !myIp || s <= bestScore) return;
-        setBestScore(s);
-        const safeIp = myIp.replace(/\./g,"_");
-        const visitor = await window.db.collection("visitors").doc(safeIp).get();
-        const name = visitor.exists ? (visitor.data().name||"익명") : "익명";
-        await window.db.collection("game_scores").doc(safeIp).set({ score:s, name, date:new Date().toISOString() });
-      };
-
-      const startGame = () => {
-        const cv = cvs.current;
-        if (!cv) return;
-        const W = cv.width, H = cv.height;
-        const gs = {
-          px: W/2, py: H/2,
-          bullets: [], t: 0, alive: true, score: 0,
-          lastSpawn: 0, interval: 1200
-        };
-        state.current = gs;
-        setPhase("playing");
-        setScore(0);
-        cancelAnimationFrame(loop.current);
-
-        const tick = (now) => {
-          if (!gs.alive) return;
-          gs.t = now;
-          // Spawn bullet
-          if (now - gs.lastSpawn > gs.interval) {
-            gs.lastSpawn = now;
-            gs.interval = Math.max(400, 1200 - gs.score*3);
-            const edge = Math.floor(Math.random()*4);
-            let bx,by;
-            if(edge===0){bx=Math.random()*W;by=0;}
-            else if(edge===1){bx=W;by=Math.random()*H;}
-            else if(edge===2){bx=Math.random()*W;by=H;}
-            else{bx=0;by=Math.random()*H;}
-            const angle=Math.atan2(gs.py-by,gs.px-bx);
-            const spd=2+gs.score*0.03;
-            gs.bullets.push({x:bx,y:by,vx:Math.cos(angle)*spd,vy:Math.sin(angle)*spd,r:6,
-              color:`hsl(${Math.random()*360},80%,60%)`});
-          }
-          // Move bullets
-          gs.bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;});
-          gs.bullets=gs.bullets.filter(b=>b.x>-20&&b.x<W+20&&b.y>-20&&b.y<H+20);
-          // Collision
-          for(const b of gs.bullets){
-            const dx=gs.px-b.x,dy=gs.py-b.y;
-            if(Math.sqrt(dx*dx+dy*dy)<b.r+8){gs.alive=false;break;}
-          }
-          // Score
-          gs.score=Math.floor((now-gs.t0)/100);
-          setScore(gs.score);
-          // Draw
-          const ctx=cv.getContext("2d");
-          ctx.clearRect(0,0,W,H);
-          ctx.fillStyle="#0f172a"; ctx.fillRect(0,0,W,H);
-          // Grid
-          ctx.strokeStyle="rgba(255,255,255,.05)"; ctx.lineWidth=1;
-          for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-          for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-          // Bullets
-          gs.bullets.forEach(b=>{
-            ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
-            ctx.fillStyle=b.color; ctx.fill();
-            ctx.shadowBlur=8; ctx.shadowColor=b.color; ctx.fill(); ctx.shadowBlur=0;
+      const models = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"];
+      const wStr = Object.entries(locationWeights).map(([k,v])=>k+":"+v).join(",");
+      const infra = prop.infrastructure.map(i=>i.label).join(",") || "없음";
+      const prompt = "아파트 입지를 평가해서 JSON으로만 응답. 다른말 없이 JSON만. " +
+        "아파트명:" + prop.buildingName + " 주소:" + prop.address + " " +
+        "가격:" + (formatPrice(prop.price)||"미입력") + " " + (prop.size||"?") + "평 " +
+        "준공:" + (prop.constructionYear||"미상") + "년 인프라:" + infra + " " +
+        "가중치(" + wStr + ") " +
+        'JSON형식: {"rating":4.2,"summary":"50자이내평가","scores":{"역세권":4,"학군":4,"교통":4,"편의시설":4,"자연환경":3,"주차":3,"단지규모":4,"브랜드":3}}';
+      for (const model of models) {
+        try {
+          const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + GEMINI_KEY;
+          const res = await fetch(url, {
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({contents:[{parts:[{text:prompt}]}]})
           });
-          // Player
-          ctx.beginPath();ctx.arc(gs.px,gs.py,8,0,Math.PI*2);
-          ctx.fillStyle="#60a5fa"; ctx.fill();
-          ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
-          ctx.shadowBlur=12; ctx.shadowColor="#60a5fa"; ctx.fill(); ctx.shadowBlur=0;
-          if(gs.alive) loop.current=requestAnimationFrame(tick);
-          else{setPhase("dead");saveScore(gs.score);}
-        };
-        gs.t0=performance.now();
-        loop.current=requestAnimationFrame(tick);
-      };
-
-      const handleMove = (e) => {
-        e.preventDefault();
-        const cv=cvs.current; if(!cv||phase!=="playing") return;
-        const rect=cv.getBoundingClientRect();
-        const scaleX=cv.width/rect.width, scaleY=cv.height/rect.height;
-        const src=e.touches?e.touches[0]:e;
-        state.current.px=(src.clientX-rect.left)*scaleX;
-        state.current.py=(src.clientY-rect.top)*scaleY;
-      };
-
-      useEffect(()=>()=>cancelAnimationFrame(loop.current),[]);
-
-      const W=Math.min(340, typeof window!=="undefined"?window.innerWidth-32:340);
-      const H=Math.round(W*1.3);
-
-      return (
-        <div style={{padding:"16px",maxWidth:400,margin:"0 auto",textAlign:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
-            <button className="btn-secondary" onClick={onBack} style={{fontSize:12,padding:"6px 12px"}}>← 뒤로</button>
-            <h2 style={{fontWeight:800,fontSize:18,color:"#0f172a",flex:1}}>🎮 총알 피하기</h2>
-            {bestScore>0&&<span style={{fontSize:12,color:"#64748b"}}>최고 {bestScore}점</span>}
-          </div>
-
-          <div style={{position:"relative",display:"inline-block",borderRadius:12,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,.3)"}}>
-            <canvas ref={cvs} width={W} height={H}
-              style={{display:"block",touchAction:"none",userSelect:"none",cursor:phase==="playing"?"none":"default"}}
-              onMouseMove={handleMove} onTouchMove={handleMove} />
-            {phase!=="playing"&&(
-              <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
-                {phase==="dead"&&<><p style={{color:"#ef4444",fontSize:22,fontWeight:800}}>💥 GAME OVER</p><p style={{color:"#fff",fontSize:28,fontWeight:900}}>{score}점</p><p style={{color:"#64748b",fontSize:13}}>{score>bestScore?"🏆 새 기록!":""}</p></>}
-                {phase==="ready"&&<p style={{color:"#fff",fontSize:18,fontWeight:700}}>파란 점을 이동시켜 총알을 피하세요!</p>}
-                <button className="btn-primary" onClick={startGame} style={{fontSize:16,padding:"12px 32px"}}>
-                  {phase==="dead"?"다시 시작":"시작하기"}
-                </button>
-              </div>
-            )}
-            {phase==="playing"&&(
-              <div style={{position:"absolute",top:10,right:12,color:"#fff",fontSize:16,fontWeight:800,textShadow:"0 2px 4px rgba(0,0,0,.5)"}}>
-                {score}점
-              </div>
-            )}
-          </div>
-
-          {/* 리더보드 */}
-          <div className="card" style={{marginTop:16,padding:20,textAlign:"left"}}>
-            <p className="section-label">🏆 리더보드</p>
-            {!window.IS_FB&&<p style={{color:"#94a3b8",fontSize:13,textAlign:"center"}}>Firebase 연결 시 리더보드 표시</p>}
-            {board.map((r,i)=>(
-              <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f1f5f9"}}>
-                <span style={{fontSize:16,width:24,textAlign:"center"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</span>
-                <span style={{flex:1,fontSize:14,fontWeight:600}}>{r.name||"익명"}</span>
-                <span style={{fontSize:15,fontWeight:800,color:"#1d4ed8"}}>{r.score}점</span>
-              </div>
-            ))}
-            {board.length===0&&window.IS_FB&&<p style={{color:"#94a3b8",fontSize:13,textAlign:"center"}}>아직 기록이 없어요. 첫 번째 도전자가 되세요!</p>}
-          </div>
-        </div>
-      );
+          const data = await res.json();
+          if (data.error) { console.warn("Gemini",model,"err:",data.error.message); continue; }
+          const raw = (data.candidates?.[0]?.content?.parts?.[0]?.text||"").trim();
+          if (!raw) continue;
+          const m = raw.match(/\{[\s\S]*\}/);
+          if (!m) return {rating:3.0, summary:raw.slice(0,80), scores:{}};
+          const json = JSON.parse(m[0]);
+          console.log("Gemini OK with", model);
+          return json;
+        } catch(e) { console.error("Gemini fetch err:", e); }
+      }
+      return null;
     }
+
 
     /* ─── PRICE CHART ─── */
     function PriceChart({ prop }) {
@@ -1149,66 +998,71 @@
         let fetchErrors = 0;
         const results = [];
         const now = new Date();
+        const proxies = [
+          (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
+          (url) => "https://api.allorigins.win/get?url=" + encodeURIComponent(url),
+          (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
+        ];
+        let workingProxy = null;
+
         for (let i = 0; i < 36; i++) {
           const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
-          const ym = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}`;
-          try {
-            const apiUrl = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev" +
-              "?serviceKey=" + GOV_API_KEY +
-              "&LAWD_CD=" + prop.dongCode +
-              "&DEAL_YMD=" + ym +
-              "&numOfRows=100&pageNo=1";
-            let xmlStr = "";
-            const proxies = [
-              "https://corsproxy.io/?" + encodeURIComponent(apiUrl),
-              "https://api.allorigins.win/get?url=" + encodeURIComponent(apiUrl),
-            ];
-            for (const proxy of proxies) {
-              try {
-                const r = await fetch(proxy, {signal: AbortSignal.timeout(10000)});
-                if (!r.ok) continue;
-                const t = await r.text();
-                if (t.includes("<item>") || t.includes('"item"')) {
-                  xmlStr = t.includes('"contents"') ? JSON.parse(t).contents : t;
-                  break;
-                }
-              } catch(pe) { continue; }
-            }
-            if (!xmlStr) continue;
-            const xml = xmlStr;
-            let items = [];
+          const ym = d.getFullYear() + String(d.getMonth()+1).padStart(2,"0");
+          const apiUrl = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev" +
+            "?serviceKey=" + GOV_API_KEY +
+            "&LAWD_CD=" + prop.dongCode +
+            "&DEAL_YMD=" + ym + "&numOfRows=100&pageNo=1";
+
+          let xmlStr = "";
+          const tryList = workingProxy ? [workingProxy] : proxies;
+          for (const proxyFn of tryList) {
             try {
-              const parsed = JSON.parse(xml);
-              const arr = parsed?.response?.body?.items?.item;
-              if (Array.isArray(arr)) {
-                items = arr.map(i => ({
-                  querySelector: (tag) => ({textContent: i[tag]||""})
-                }));
-              } else if (arr) {
-                items = [{ querySelector: (tag) => ({textContent: arr[tag]||""}) }];
+              const r = await fetch(proxyFn(apiUrl), {signal:AbortSignal.timeout(12000)});
+              if (!r.ok) continue;
+              const t = await r.text();
+              const raw = t.includes('"contents"') ? (JSON.parse(t).contents||"") : t;
+              if (raw.includes("<item>") || raw.includes('"아파트"')) {
+                xmlStr = raw; workingProxy = proxyFn; break;
               }
-            } catch {
+            } catch {}
+          }
+          if (!xmlStr) continue;
+
+          try {
+            // JSON 응답 처리
+            if (xmlStr.includes('"item"')) {
+              const j = JSON.parse(xmlStr);
+              const arr = j?.response?.body?.items?.item;
+              const items = Array.isArray(arr) ? arr : (arr ? [arr] : []);
+              items.forEach(item => {
+                const name  = (item["아파트"]||"").trim();
+                const price = parseInt((item["거래금액"]||"0").replace(/,/g,""));
+                const area  = parseFloat(item["전용면적"]||"0");
+                const year  = String(item["년"]||"");
+                const month = String(item["월"]||"");
+                const key = prop.buildingName.replace(/\s/g,"").slice(0,3);
+                if (name && name.includes(key)) {
+                  results.push({ym, year, month, area:Math.round(area/3.305)||Math.round(area), price:price/10000});
+                }
+              });
+            } else {
+              // XML 파싱
               const parser = new DOMParser();
-              const doc = parser.parseFromString(xml, "text/xml");
-              items = Array.from(doc.querySelectorAll("item")).map(el => ({
-                querySelector: (tag) => el.querySelector(tag)
-              }));
+              const doc = parser.parseFromString(xmlStr,"text/xml");
+              doc.querySelectorAll("item").forEach(el => {
+                const g = tag => (el.querySelector(tag)?.textContent||"").trim();
+                const name  = g("아파트");
+                const price = parseInt((g("거래금액")||"0").replace(/,/g,""));
+                const area  = parseFloat(g("전용면적")||"0");
+                const year  = g("년"); const month = g("월");
+                const key = prop.buildingName.replace(/\s/g,"").slice(0,3);
+                if (name && name.includes(key)) {
+                  results.push({ym, year, month, area:Math.round(area/3.305)||Math.round(area), price:price/10000});
+                }
+              });
             }
-            items.forEach(item => {
-              const getText = (tag) => (item.querySelector(tag)?.textContent || "").trim();
-              const name  = getText("아파트");
-              const area  = parseFloat(getText("전용면적") || "0");
-              const price = parseInt((getText("거래금액") || "0").replace(/[^0-9]/g,""));
-              const year  = getText("년") || getText("dealYear");
-              const month = getText("월") || getText("dealMonth");
-              const nameKey = prop.buildingName.replace(/\s/g,"").slice(0,4);
-              if (name && (name.includes(nameKey) || nameKey.includes(name.slice(0,4)))) {
-                results.push({ ym, year, month, area: Math.round(area/3.305)||Math.round(area), price: price/10000 });
-              }
-            });
-          } catch(e) { fetchErrors++; }
+          } catch(pe) { console.warn("parse err:", pe); }
         }
-        if (fetchErrors > 30) setError("CORS 프록시 연결 실패. 잠시 후 다시 시도해주세요.");
         results.sort((a,b)=>a.ym.localeCompare(b.ym));
         setTxData(results);
         setFetched(true);
@@ -1597,6 +1451,9 @@
                 set("lng",          r.lng);
                 if (r.dongCode) set("dongCode", r.dongCode);
               }} />
+              <p style={{fontSize:11,color:"#94a3b8",marginTop:6}}>
+                💡 준공년도는 자동 입력이 어려워요. 아파트 이름으로 네이버/호갱노노 검색 후 직접 입력해주세요.
+              </p>
             </div>
 
             <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
@@ -1857,7 +1714,1106 @@
             {view==="list" && <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />}
             {view==="map"  && <MapView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} />}
             {view==="admin" && <AdminView onBack={()=>setView("list")} myIp={myIp} />}
-            {view==="game"  && <BulletGame onBack={()=>go("list")} myIp={myIp} />}
+            {view==="game"  && <BulletGameTab myIp={myIp} />}
+            {view==="detail" && selected && <DetailView prop={selected} onEdit={()=>{setEditing(selected);setView("form");}} onDelete={()=>deleteProp(selected.id)} onBack={()=>go("list")} />}
+            {view==="form" && <PropertyForm initial={editing} onSave={saveProp} onCancel={()=>{setEditing(null);setView(editing?"detail":"list");}} />}
+            {/* 하단 네비게이션 */}
+            <nav className="bottom-nav">
+              {[
+                {id:"list", icon:"🏠", label:"목록"},
+                {id:"map",  icon:"🗺", label:"지도"},
+                {id:"add",  icon:"➕", label:"추가"},
+                {id:"game", icon:"🎮", label:"게임"},
+                {id:"admin",icon:"🔐", label:"관리"},
+              ].map(btn=>(
+                <button key={btn.id} className={`bnav-btn${view===btn.id?" active":""}`}
+                  onClick={()=>{
+                    if(btn.id==="add"){setEditing(null);setView("form");setSidebarOpen(false);}
+                    else{go(btn.id);setSidebarOpen(false);}
+                  }}>
+                  <span className="bnav-icon">{btn.icon}</span>
+                  <span>{btn.label}</span>
+                </button>
+              ))}
+            </nav>
+          </main>
+        </div>
+      );
+    }
+
+    function MobilePreviewWrapper() {
+      if (!MOBILE_PREVIEW) return <App />;
+      return (
+        <div style={{minHeight:"100vh",background:"#1a1a2e",display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"40px 20px",gap:20}}>
+          <div style={{position:"sticky",top:40}}>
+            <p style={{color:"#94a3b8",fontSize:12,marginBottom:8,textAlign:"center"}}>갤럭시 S25 미리보기</p>
+            <div style={{width:360,height:780,border:"8px solid #333",borderRadius:40,overflow:"hidden",boxShadow:"0 24px 64px rgba(0,0,0,.5)",background:"#fff",position:"relative"}}>
+              <div style={{position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",width:80,height:8,background:"#333",borderRadius:"0 0 8px 8px",zIndex:10}}></div>
+              <div style={{width:"100%",height:"100%",overflowY:"auto",overflowX:"hidden"}}>
+                <App />
+              </div>
+            </div>
+            <p style={{color:"#475569",fontSize:11,textAlign:"center",marginTop:12}}>360 × 780 px</p>
+          </div>
+        </div>
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
+  </script>
+</body>
+</html>    /* ─── GAMES ─── */
+    function VirtualJoystick({ onMove }) {
+      const baseRef = React.useRef(null);
+      const [thumb, setThumb] = useState({x:0,y:0});
+      const active = React.useRef(false);
+      const MAX = 38;
+      const getDir = (cx,cy) => {
+        const base = baseRef.current.getBoundingClientRect();
+        const bx = base.left+base.width/2, by = base.top+base.height/2;
+        const dx = cx-bx, dy = cy-by;
+        const dist = Math.sqrt(dx*dx+dy*dy);
+        const clamp = Math.min(dist,MAX);
+        const angle = Math.atan2(dy,dx);
+        const tx = Math.cos(angle)*clamp, ty = Math.sin(angle)*clamp;
+        setThumb({x:tx,y:ty});
+        onMove({dx: tx/MAX, dy: ty/MAX});
+      };
+      return (
+        <div ref={baseRef}
+          style={{width:90,height:90,borderRadius:"50%",background:"rgba(255,255,255,.15)",border:"2px solid rgba(255,255,255,.3)",
+            position:"relative",display:"flex",alignItems:"center",justifyContent:"center",touchAction:"none",userSelect:"none"}}
+          onTouchStart={e=>{active.current=true;getDir(e.touches[0].clientX,e.touches[0].clientY);}}
+          onTouchMove={e=>{if(active.current)getDir(e.touches[0].clientX,e.touches[0].clientY);}}
+          onTouchEnd={()=>{active.current=false;setThumb({x:0,y:0});onMove({dx:0,dy:0});}}>
+          <div style={{width:34,height:34,borderRadius:"50%",background:"rgba(255,255,255,.5)",
+            position:"absolute",transform:`translate(${thumb.x}px,${thumb.y}px)`,transition:"none"}} />
+        </div>
+      );
+    }
+
+    function BulletGame({ myIp, board, saveScore }) {
+      const cvs  = React.useRef(null);
+      const loop = React.useRef(null);
+      const gs   = React.useRef({});
+      const joy  = React.useRef({dx:0,dy:0});
+      const [phase, setPhase] = useState("ready");
+      const [score, setScore] = useState(0);
+
+      const start = () => {
+        const cv=cvs.current; if(!cv) return;
+        const W=cv.width,H=cv.height;
+        gs.current={px:W/2,py:H/2,bullets:[],alive:true,score:0,lastSpawn:0,interval:1100,t0:performance.now()};
+        setPhase("playing"); setScore(0);
+        cancelAnimationFrame(loop.current);
+        const tick=(now)=>{
+          const g=gs.current; if(!g.alive) return;
+          // Joystick
+          g.px=Math.max(10,Math.min(W-10,g.px+joy.current.dx*3.5));
+          g.py=Math.max(10,Math.min(H-10,g.py+joy.current.dy*3.5));
+          // Spawn
+          if(now-g.lastSpawn>g.interval){
+            g.lastSpawn=now; g.interval=Math.max(380,1100-g.score*4);
+            const edge=Math.floor(Math.random()*4);
+            let bx,by;
+            if(edge===0){bx=Math.random()*W;by=-10;}
+            else if(edge===1){bx=W+10;by=Math.random()*H;}
+            else if(edge===2){bx=Math.random()*W;by=H+10;}
+            else{bx=-10;by=Math.random()*H;}
+            const ang=Math.atan2(g.py-by,g.px-bx);
+            const spd=1.8+g.score*0.04;
+            g.bullets.push({x:bx,y:by,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,r:7,
+              c:`hsl(${Math.random()*360},80%,60%)`});
+          }
+          g.bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;});
+          g.bullets=g.bullets.filter(b=>b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30);
+          // Collision
+          for(const b of g.bullets){
+            const dx=g.px-b.x,dy=g.py-b.y;
+            if(Math.sqrt(dx*dx+dy*dy)<b.r+7){g.alive=false;break;}
+          }
+          g.score=Math.floor((now-g.t0)/100);
+          setScore(g.score);
+          // Draw
+          const ctx=cv.getContext("2d");
+          ctx.fillStyle="#0f172a"; ctx.fillRect(0,0,W,H);
+          ctx.strokeStyle="rgba(255,255,255,.04)"; ctx.lineWidth=1;
+          for(let x=0;x<W;x+=30){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+          for(let y=0;y<H;y+=30){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+          g.bullets.forEach(b=>{
+            ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);
+            ctx.fillStyle=b.c; ctx.shadowBlur=8; ctx.shadowColor=b.c; ctx.fill(); ctx.shadowBlur=0;
+          });
+          ctx.beginPath();ctx.arc(g.px,g.py,8,0,Math.PI*2);
+          ctx.fillStyle="#60a5fa"; ctx.shadowBlur=14; ctx.shadowColor="#60a5fa"; ctx.fill(); ctx.shadowBlur=0;
+          ctx.strokeStyle="#fff"; ctx.lineWidth=2; ctx.stroke();
+          ctx.fillStyle="#fff"; ctx.font="bold 14px sans-serif"; ctx.textAlign="right";
+          ctx.fillText(g.score+"점",W-8,20);
+          if(g.alive) loop.current=requestAnimationFrame(tick);
+          else{setPhase("dead");saveScore(g.score);}
+        };
+        loop.current=requestAnimationFrame(tick);
+      };
+
+      const moveByMouse=(e)=>{
+        if(phase!=="playing"||!cvs.current) return;
+        const r=cvs.current.getBoundingClientRect();
+        const sc=cvs.current.width/r.width;
+        const src=e.touches?e.touches[0]:e;
+        gs.current.px=(src.clientX-r.left)*sc;
+        gs.current.py=(src.clientY-r.top)*sc;
+      };
+
+      useEffect(()=>()=>cancelAnimationFrame(loop.current),[]);
+      const W=Math.min(330,window.innerWidth-32), H=Math.round(W*1.1);
+
+      return (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+          <div style={{position:"relative",borderRadius:12,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,.4)"}}>
+            <canvas ref={cvs} width={W} height={H} style={{display:"block",touchAction:"none",userSelect:"none"}}
+              onMouseMove={moveByMouse} onTouchMove={moveByMouse} />
+            {phase!=="playing"&&(
+              <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,.85)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
+                {phase==="dead"&&<><p style={{color:"#ef4444",fontSize:20,fontWeight:800}}>💥 GAME OVER</p><p style={{color:"#fff",fontSize:32,fontWeight:900}}>{score}점</p></>}
+                {phase==="ready"&&<p style={{color:"#fff",fontSize:15,textAlign:"center",padding:"0 20px"}}>파란 점이 플레이어!{"
+"}마우스/조이스틱으로 총알 피하세요</p>}
+                <button className="btn-primary" onClick={start} style={{fontSize:15,padding:"10px 28px"}}>{phase==="dead"?"다시시작":"시작"}</button>
+              </div>
+            )}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:W,paddingTop:4}}>
+            <VirtualJoystick onMove={v=>{joy.current=v;}} />
+            <div style={{color:"#64748b",fontSize:11,textAlign:"center"}}>
+              <div>마우스/터치:</div><div>직접 이동</div>
+              <div style={{marginTop:4}}>조이스틱:</div><div>방향 이동</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function PoopGame({ myIp, board, saveScore }) {
+      const cvs  = React.useRef(null);
+      const loop = React.useRef(null);
+      const gs   = React.useRef({});
+      const [phase,    setPhase]    = useState("ready");
+      const [score,    setScore]    = useState(0);
+      const [lives,    setLives]    = useState(3);
+      const [invLeft,  setInvLeft]  = useState(0);
+      const joyRef = React.useRef({dx:0});
+
+      const useSkill = () => {
+        const g=gs.current; if(!g.alive||g.invincible>0) return;
+        g.invincible=60; // 60 frames = 1 second
+      };
+
+      const start = () => {
+        const cv=cvs.current; if(!cv) return;
+        const W=cv.width,H=cv.height;
+        const g={
+          px:W/2,vx:0,poops:[],alive:true,score:0,lives:3,
+          lastSpawn:0,interval:900,invincible:0,flashFrame:0,
+          t0:performance.now(),frame:0
+        };
+        gs.current=g;
+        setPhase("playing"); setScore(0); setLives(3); setInvLeft(0);
+        cancelAnimationFrame(loop.current);
+
+        const drawStickman=(ctx,x,y,inv)=>{
+          const col = inv>0 ? (Math.floor(g.frame/4)%2===0?"#f59e0b":"#fff") : "#60a5fa";
+          ctx.strokeStyle=col; ctx.lineWidth=2.5; ctx.fillStyle=col;
+          // Head
+          ctx.beginPath(); ctx.arc(x,y-26,9,0,Math.PI*2); ctx.fill();
+          // Body
+          ctx.beginPath(); ctx.moveTo(x,y-17); ctx.lineTo(x,y); ctx.stroke();
+          // Arms
+          ctx.beginPath(); ctx.moveTo(x-12,y-10); ctx.lineTo(x,y-14); ctx.lineTo(x+12,y-10); ctx.stroke();
+          // Legs
+          ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-10,y+16); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+10,y+16); ctx.stroke();
+          // Smile
+          ctx.strokeStyle=inv>0?"#0f172a":col; ctx.lineWidth=1.5;
+          ctx.beginPath(); ctx.arc(x,y-28,4,0.2,Math.PI-0.2); ctx.stroke();
+        };
+
+        const tick=(now)=>{
+          g.frame++;
+          const W=cv.width,H=cv.height;
+          // Joystick move
+          g.vx += joyRef.current.dx * 0.8;
+          g.vx *= 0.75;
+          g.px = Math.max(18,Math.min(W-18,g.px+g.vx));
+          // Spawn poop
+          if(now-g.lastSpawn>g.interval){
+            g.lastSpawn=now; g.interval=Math.max(350,900-g.score*5);
+            g.poops.push({x:Math.random()*(W-30)+15,y:-10,spd:2+g.score*0.05+Math.random()*1.5});
+          }
+          g.poops.forEach(p=>p.y+=p.spd);
+          if(g.invincible>0){g.invincible--;setInvLeft(g.invincible);}
+          // Collision + remove
+          const py=H-50;
+          g.poops=g.poops.filter(p=>{
+            if(p.y>H+10){return false;}
+            if(g.invincible===0){
+              const dx=p.x-g.px,dy=p.y-py;
+              if(Math.sqrt(dx*dx+dy*dy)<20){
+                g.lives--;setLives(g.lives);
+                if(g.lives<=0){g.alive=false;}
+                return false;
+              }
+            }
+            return true;
+          });
+          g.score=Math.floor((now-g.t0)/100);
+          setScore(g.score);
+          // Draw
+          const ctx=cv.getContext("2d");
+          // Sky bg
+          const sky=ctx.createLinearGradient(0,0,0,H);
+          sky.addColorStop(0,"#1e3a5f"); sky.addColorStop(1,"#0f1923");
+          ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+          // Ground
+          ctx.fillStyle="#1a4731"; ctx.fillRect(0,H-20,W,20);
+          ctx.fillStyle="#22543d"; ctx.fillRect(0,H-22,W,4);
+          // Poops
+          ctx.font="22px serif";
+          g.poops.forEach(p=>{ctx.fillText("💩",p.x-11,p.y+8);});
+          // Stickman
+          drawStickman(ctx,g.px,H-24,g.invincible);
+          // HUD
+          ctx.fillStyle="#fff"; ctx.font="bold 13px sans-serif"; ctx.textAlign="left";
+          ctx.fillText("❤️".repeat(g.lives),6,20);
+          ctx.textAlign="right";
+          ctx.fillText(g.score+"점",W-6,20);
+          if(g.invincible>0){
+            ctx.fillStyle="#f59e0b"; ctx.textAlign="center"; ctx.font="bold 12px sans-serif";
+            ctx.fillText("⚡ 무적! "+Math.ceil(g.invincible/60)+"초",W/2,H/2);
+          }
+          if(g.alive) loop.current=requestAnimationFrame(tick);
+          else{setPhase("dead");saveScore(g.score);}
+        };
+        loop.current=requestAnimationFrame(tick);
+      };
+
+      useEffect(()=>()=>cancelAnimationFrame(loop.current),[]);
+      const W=Math.min(330,window.innerWidth-32), H=Math.round(W*1.1);
+
+      return (
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:10}}>
+          <div style={{position:"relative",borderRadius:12,overflow:"hidden",boxShadow:"0 8px 32px rgba(0,0,0,.4)"}}>
+            <canvas ref={cvs} width={W} height={H} style={{display:"block"}} />
+            {phase!=="playing"&&(
+              <div style={{position:"absolute",inset:0,background:"rgba(15,23,42,.88)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14}}>
+                {phase==="dead"&&<><p style={{color:"#ef4444",fontSize:20,fontWeight:800}}>💀 GAME OVER</p><p style={{color:"#fff",fontSize:32,fontWeight:900}}>{score}점</p></>}
+                {phase==="ready"&&<div style={{textAlign:"center",padding:"0 20px"}}><p style={{color:"#fff",fontSize:15,marginBottom:8}}>졸라맨이 💩을 피하세요!</p><p style={{color:"#f59e0b",fontSize:12}}>⚡ 필살기 버튼: 1초 무적</p></div>}
+                <button className="btn-primary" onClick={start} style={{fontSize:15,padding:"10px 28px"}}>{phase==="dead"?"다시시작":"시작"}</button>
+              </div>
+            )}
+          </div>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",width:W,gap:12}}>
+            <VirtualJoystick onMove={v=>{joyRef.current={dx:v.dx};}} />
+            <button onClick={useSkill}
+              style={{flex:1,padding:"14px",background: invLeft>0?"#94a3b8":"linear-gradient(135deg,#f59e0b,#ef4444)",
+                color:"#fff",border:"none",borderRadius:12,fontSize:16,fontWeight:800,cursor:"pointer",
+                boxShadow:"0 4px 12px rgba(239,68,68,.4)",opacity:invLeft>0?.5:1}}>
+              ⚡ 필살기{invLeft>0?" ("+Math.ceil(invLeft/60)+"초)":""}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function BulletGameTab({ myIp }) {
+      const [gameTab, setGameTab] = useState("bullet");
+      const [board,   setBoard]   = useState([]);
+      const [best,    setBest]    = useState(0);
+
+      useEffect(() => {
+        if (!window.IS_FB) return;
+        window.db.collection("game_scores_"+gameTab).orderBy("score","desc").limit(8)
+          .onSnapshot(snap => setBoard(snap.docs.map(d=>({...d.data(),id:d.id}))));
+        if (myIp) {
+          const key = myIp.replace(/\./g,"_");
+          window.db.collection("game_scores_"+gameTab).doc(key).get()
+            .then(doc => setBest(doc.exists?doc.data().score||0:0));
+        }
+      }, [myIp, gameTab]);
+
+      const saveScore = async (s) => {
+        if (!window.IS_FB || !myIp || s <= best) return;
+        setBest(s);
+        const key = myIp.replace(/\./g,"_");
+        const vDoc = await window.db.collection("visitors").doc(key).get();
+        const name = vDoc.exists ? (vDoc.data().name||"익명") : "익명";
+        await window.db.collection("game_scores_"+gameTab).doc(key).set({score:s,name,date:new Date().toISOString()});
+      };
+
+      return (
+        <div style={{padding:16,maxWidth:400,margin:"0 auto"}}>
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            <button onClick={()=>setGameTab("bullet")} className={gameTab==="bullet"?"btn-primary":"btn-secondary"} style={{flex:1,fontSize:13}}>🔵 총알 피하기</button>
+            <button onClick={()=>setGameTab("poop")}   className={gameTab==="poop"  ?"btn-primary":"btn-secondary"} style={{flex:1,fontSize:13}}>💩 똥 피하기</button>
+          </div>
+          {best>0&&<p style={{textAlign:"center",fontSize:12,color:"#64748b",marginBottom:10}}>내 최고: {best}점</p>}
+          {gameTab==="bullet" ? <BulletGame myIp={myIp} board={board} saveScore={saveScore} /> : <PoopGame myIp={myIp} board={board} saveScore={saveScore} />}
+          <div className="card" style={{marginTop:14,padding:16}}>
+            <p className="section-label">🏆 리더보드</p>
+            {!window.IS_FB&&<p style={{color:"#94a3b8",fontSize:12,textAlign:"center"}}>Firebase 연결 시 기록 저장</p>}
+            {board.map((r,i)=>(
+              <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",borderBottom:"1px solid #f1f5f9"}}>
+                <span style={{fontSize:15,width:24,textAlign:"center"}}>{i===0?"🥇":i===1?"🥈":i===2?"🥉":i+1}</span>
+                <span style={{flex:1,fontSize:13,fontWeight:600}}>{r.name||"익명"}</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#1d4ed8"}}>{r.score}점</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+
+    /* ─── PRICE CHART ─── */
+    function PriceChart({ prop }) {
+      const [loading,  setLoading]  = useState(false);
+      const [txData,   setTxData]   = useState([]);
+      const [error,    setError]    = useState("");
+      const [fetched,  setFetched]  = useState(false);
+      const chartRef = React.useRef(null);
+      const chartInst = React.useRef(null);
+
+      useEffect(() => {
+        if (prop.dongCode && prop.dongCode.length===5 && IS_GOV_API) fetchData();
+      }, []);
+
+      const fetchData = async () => {
+        if (!prop.dongCode || prop.dongCode.length !== 5) {
+          setError("법정동코드(5자리)를 먼저 수정 화면에서 입력해주세요");
+          return;
+        }
+        if (!IS_GOV_API) {
+          setError("data.go.kr API 키를 index.html 상단 GOV_API_KEY에 입력해주세요");
+          return;
+        }
+        setLoading(true); setError(""); setTxData([]);
+        let fetchErrors = 0;
+        const results = [];
+        const now = new Date();
+        const proxies = [
+          (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
+          (url) => "https://api.allorigins.win/get?url=" + encodeURIComponent(url),
+          (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
+        ];
+        let workingProxy = null;
+
+        for (let i = 0; i < 36; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+          const ym = d.getFullYear() + String(d.getMonth()+1).padStart(2,"0");
+          const apiUrl = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev" +
+            "?serviceKey=" + GOV_API_KEY +
+            "&LAWD_CD=" + prop.dongCode +
+            "&DEAL_YMD=" + ym + "&numOfRows=100&pageNo=1";
+
+          let xmlStr = "";
+          const tryList = workingProxy ? [workingProxy] : proxies;
+          for (const proxyFn of tryList) {
+            try {
+              const r = await fetch(proxyFn(apiUrl), {signal:AbortSignal.timeout(12000)});
+              if (!r.ok) continue;
+              const t = await r.text();
+              const raw = t.includes('"contents"') ? (JSON.parse(t).contents||"") : t;
+              if (raw.includes("<item>") || raw.includes('"아파트"')) {
+                xmlStr = raw; workingProxy = proxyFn; break;
+              }
+            } catch {}
+          }
+          if (!xmlStr) continue;
+
+          try {
+            // JSON 응답 처리
+            if (xmlStr.includes('"item"')) {
+              const j = JSON.parse(xmlStr);
+              const arr = j?.response?.body?.items?.item;
+              const items = Array.isArray(arr) ? arr : (arr ? [arr] : []);
+              items.forEach(item => {
+                const name  = (item["아파트"]||"").trim();
+                const price = parseInt((item["거래금액"]||"0").replace(/,/g,""));
+                const area  = parseFloat(item["전용면적"]||"0");
+                const year  = String(item["년"]||"");
+                const month = String(item["월"]||"");
+                const key = prop.buildingName.replace(/\s/g,"").slice(0,3);
+                if (name && name.includes(key)) {
+                  results.push({ym, year, month, area:Math.round(area/3.305)||Math.round(area), price:price/10000});
+                }
+              });
+            } else {
+              // XML 파싱
+              const parser = new DOMParser();
+              const doc = parser.parseFromString(xmlStr,"text/xml");
+              doc.querySelectorAll("item").forEach(el => {
+                const g = tag => (el.querySelector(tag)?.textContent||"").trim();
+                const name  = g("아파트");
+                const price = parseInt((g("거래금액")||"0").replace(/,/g,""));
+                const area  = parseFloat(g("전용면적")||"0");
+                const year  = g("년"); const month = g("월");
+                const key = prop.buildingName.replace(/\s/g,"").slice(0,3);
+                if (name && name.includes(key)) {
+                  results.push({ym, year, month, area:Math.round(area/3.305)||Math.round(area), price:price/10000});
+                }
+              });
+            }
+          } catch(pe) { console.warn("parse err:", pe); }
+        }
+        results.sort((a,b)=>a.ym.localeCompare(b.ym));
+        setTxData(results);
+        setFetched(true);
+        setLoading(false);
+      };
+
+      useEffect(() => {
+        if (!fetched || txData.length===0 || !chartRef.current) return;
+        if (chartInst.current) chartInst.current.destroy();
+        const labels = [...new Set(txData.map(t=>`${t.year}.${String(t.month).padStart(2,"0")}`))];
+        const avgByMonth = labels.map(lbl => {
+          const items = txData.filter(t=>`${t.year}.${String(t.month).padStart(2,"0")}`===lbl);
+          return Math.round(items.reduce((s,i)=>s+i.price,0)/items.length);
+        });
+        chartInst.current = new Chart(chartRef.current, {
+          type:"line",
+          data:{
+            labels,
+            datasets:[{
+              label:"평균 실거래가 (만원)",
+              data:avgByMonth,
+              borderColor:"#1d4ed8",
+              backgroundColor:"rgba(29,78,216,.08)",
+              tension:0.3, fill:true,
+              pointBackgroundColor:"#1d4ed8", pointRadius:4
+            }]
+          },
+          options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false } },
+            scales:{
+              y:{ ticks:{ callback: v => v>=10000?`${Math.round(v/10000)}억`:v+"만" } },
+              x:{ ticks:{ maxRotation:45 } }
+            }
+          }
+        });
+      }, [txData, fetched]);
+
+      return (
+        <div className="card" style={{padding:24,marginBottom:16}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <div>
+              <p className="section-label" style={{marginBottom:4}}>실거래가 히스토리 (최근 3년)</p>
+              {prop.dongCode ? <span className="tag tag-blue">법정동코드: {prop.dongCode}</span>
+                : <span className="tag tag-orange">⚠️ 수정 화면에서 법정동코드 입력 필요</span>}
+            </div>
+            <button className="btn-secondary" onClick={fetchData} disabled={loading}
+              style={{fontSize:13,padding:"8px 16px",opacity:loading?.6:1}}>
+              {loading?"조회 중...":"🔄 새로고침"}
+            </button>
+          </div>
+          {error && <p style={{color:"#dc2626",fontSize:13,marginBottom:12,padding:"10px 14px",background:"#fee2e2",borderRadius:8}}>{error}</p>}
+          {!IS_GOV_API && !error && (
+            <div style={{padding:"20px",background:"#f8fafc",borderRadius:10,border:"2px dashed #e2e8f0",textAlign:"center"}}>
+              <p style={{fontSize:13,color:"#94a3b8",lineHeight:1.7}}>
+                📋 <strong>data.go.kr</strong>에서 <strong>"아파트매매 실거래 상세 자료"</strong> API 키 발급 후<br/>
+                index.html 상단 <code style={{background:"#f1f5f9",padding:"1px 6px",borderRadius:4}}>GOV_API_KEY</code> 에 입력하면 활성화됩니다
+              </p>
+            </div>
+          )}
+          {fetched && txData.length===0 && <p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>해당 아파트의 거래 데이터가 없습니다</p>}
+          {fetched && txData.length>0 && (
+            <div style={{height:280,position:"relative"}}><canvas ref={chartRef}></canvas></div>
+          )}
+          {fetched && txData.length>0 && (
+            <div style={{marginTop:16,maxHeight:200,overflowY:"auto"}}>
+              <p style={{fontSize:11,color:"#94a3b8",marginBottom:8}}>개별 거래 내역 ({txData.length}건)</p>
+              {txData.map((t,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #f8fafc",fontSize:12}}>
+                  <span style={{color:"#64748b"}}>{t.year}.{String(t.month).padStart(2,"0")}</span>
+                  <span style={{color:"#374151"}}>{t.area}평</span>
+                  <span style={{color:"#1d4ed8",fontWeight:600}}>{t.price.toLocaleString()}만원</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── APARTMENT SEARCH ─── */
+    function ApartmentSearch({ onSelect }) {
+      const [q, setQ]           = useState("");
+      const [results, setResults] = useState([]);
+      const [loading, setLoading] = useState(false);
+      const [open, setOpen]       = useState(false);
+
+      const waitKakao = (cb, retry=0) => {
+        if (window.__kakaoReady && window.kakao && window.kakao.maps) { cb(); return; }
+        if (retry > 30) { alert("카카오맵 로드 실패. 페이지를 새로고침해주세요."); setLoading(false); return; }
+        setTimeout(() => waitKakao(cb, retry+1), 300);
+      };
+
+      const search = () => {
+        if (!q.trim()) return;
+        setLoading(true);
+        waitKakao(() => {
+          const ps = new kakao.maps.services.Places();
+          ps.keywordSearch(q + " 아파트", (data, status) => {
+            setLoading(false);
+            if (status === kakao.maps.services.Status.OK) {
+              setResults(data.slice(0, 6));
+              setOpen(true);
+            } else {
+              setResults([]);
+              alert("검색 결과가 없습니다.");
+            }
+          }, { size: 6 });
+        });
+      };
+
+      const pick = (r) => {
+        const addr = r.road_address_name || r.address_name;
+        onSelect({
+          buildingName: r.place_name.replace(/\s*아파트$/, ""),
+          address: addr,
+          lat: parseFloat(r.y),
+          lng: parseFloat(r.x),
+          dongCode: getDongCode(addr),
+        });
+        setQ(""); setResults([]); setOpen(false);
+      };
+
+      return (
+        <div style={{position:"relative"}}>
+          <div style={{display:"flex",gap:8}}>
+            <input className="input-field" placeholder="🔍 아파트명으로 검색" value={q}
+              onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&search()} style={{flex:1}} />
+            <button className="btn-secondary" onClick={search} style={{flexShrink:0,padding:"10px 16px",fontSize:13}}>
+              {loading ? "검색중..." : "검색"}
+            </button>
+          </div>
+          {open && results.length>0 && (<>
+            <div style={{position:"fixed",inset:0,zIndex:5}} onClick={()=>setOpen(false)} />
+            <div style={{position:"absolute",top:"calc(100%+6px)",left:0,right:0,background:"#fff",borderRadius:10,border:"1px solid #e2e8f0",boxShadow:"0 8px 28px rgba(0,0,0,.12)",zIndex:10,overflow:"hidden"}}>
+              {results.map(r=>(
+                <div key={r.id} onClick={()=>pick(r)}
+                  style={{padding:"12px 16px",cursor:"pointer",borderBottom:"1px solid #f8fafc",transition:"background .15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.background="#f8fafc"}
+                  onMouseLeave={e=>e.currentTarget.style.background="#fff"}>
+                  <p style={{fontWeight:600,fontSize:13,color:"#0f172a"}}>{r.place_name}</p>
+                  <p style={{fontSize:11,color:"#64748b",marginTop:2}}>{r.road_address_name||r.address_name}</p>
+                </div>
+              ))}
+            </div>
+          </>)}
+        </div>
+      );
+    }
+
+
+    function AiSummaryBtn({ form, onResult }) {
+      const [loading, setLoading] = useState(false);
+      return (
+        <button className="btn-secondary" disabled={loading}
+          style={{fontSize:12,padding:"5px 12px",opacity:loading?.6:1}}
+          onClick={async()=>{
+            setLoading(true);
+            const txt = await generateAiSummary(form);
+            if(txt) onResult(txt);
+            setLoading(false);
+          }}>
+          {loading ? "생성 중..." : "✨ 생성"}
+        </button>
+      );
+    }
+
+    /* ─── ADMIN VIEW ─── */
+    const ADMIN_PASS = "admin1234";
+
+    function AdminView({ onBack, myIp }) {
+      const [authed,   setAuthed]   = useState(false);
+      const [pw,       setPw]       = useState("");
+      const [err,      setErr]      = useState(false);
+      const [visitors, setVisitors] = useState([]);
+      const [editing,  setEditing]  = useState(null);
+      const [newName,  setNewName]  = useState("");
+
+      useEffect(() => {
+        if (!authed || !window.IS_FB) return;
+        const unsub = window.db.collection("visitors").orderBy("lastVisit","desc")
+          .onSnapshot(snap => setVisitors(snap.docs.map(d => ({...d.data(), id: d.id}))));
+        return () => unsub();
+      }, [authed]);
+
+      const tryAuth = () => {
+        if (pw === ADMIN_PASS) setAuthed(true);
+        else { setErr(true); setTimeout(()=>{setErr(false);setPw("");},1500); }
+      };
+
+      const saveName = async (id) => {
+        if (!newName.trim()) return;
+        await window.db.collection("visitors").doc(id).update({ name: newName.trim() });
+        setEditing(null); setNewName("");
+      };
+
+      const timeSince = (iso) => {
+        if (!iso) return "-";
+        const diff = Date.now() - new Date(iso).getTime();
+        const m = Math.floor(diff/60000);
+        if (m < 60) return `${m}분 전`;
+        const h = Math.floor(m/60);
+        if (h < 24) return `${h}시간 전`;
+        return `${Math.floor(h/24)}일 전`;
+      };
+
+      const [adminTab, setAdminTab] = useState("방문자");
+      const [weights,  setWeights]  = useState({...DEFAULT_WEIGHTS});
+      const [wLoaded,  setWLoaded]  = useState(false);
+
+      useEffect(() => {
+        if (!authed || !window.IS_FB || wLoaded) return;
+        window.db.collection("settings").doc("location_weights").get()
+          .then(doc => { if(doc.exists) setWeights(doc.data()); setWLoaded(true); })
+          .catch(() => setWLoaded(true));
+      }, [authed]);
+
+      const saveWeights = async () => {
+        if (!window.IS_FB) return alert("Firebase 필요");
+        await window.db.collection("settings").doc("location_weights").set(weights);
+        locationWeights = {...weights};
+        alert("저장됐습니다!");
+      };
+
+      if (!authed) return (
+        <div style={{padding:"36px 32px",maxWidth:440,margin:"0 auto"}} className="fade-up">
+          <button className="btn-secondary" onClick={onBack} style={{marginBottom:24,fontSize:13}}>← 돌아가기</button>
+          <div className="card" style={{padding:40,textAlign:"center"}}>
+            <div style={{fontSize:48,marginBottom:16}}>🔐</div>
+            <h2 style={{fontSize:22,fontWeight:800,marginBottom:8}}>관리자 페이지</h2>
+            <p style={{color:"#64748b",fontSize:14,marginBottom:24}}>관리자 비밀번호를 입력하세요</p>
+            <input className="input-field" type="password" placeholder="관리자 비밀번호" value={pw}
+              onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&tryAuth()}
+              style={{textAlign:"center",fontSize:16,letterSpacing:4,borderColor:err?"#ef4444":undefined,marginBottom:8}} autoFocus />
+            {err && <p style={{color:"#ef4444",fontSize:12,marginBottom:12}}>비밀번호가 틀렸습니다</p>}
+            <button className="btn-primary" onClick={tryAuth} style={{width:"100%",padding:12}}>입장</button>
+            <p style={{marginTop:12,fontSize:12,color:"#94a3b8"}}>기본 비밀번호: admin1234</p>
+          </div>
+        </div>
+      );
+
+      return (
+        <div style={{padding:"36px 32px",maxWidth:760,margin:"0 auto"}} className="fade-up">
+          <button className="btn-secondary" onClick={onBack} style={{marginBottom:24,fontSize:13}}>← 돌아가기</button>
+          <div style={{marginBottom:24}}>
+            <h1 style={{fontSize:26,fontWeight:800,color:"#0f172a"}}>관리자 페이지</h1>
+            <p style={{fontSize:14,color:"#64748b",marginTop:5}}>접속 기록 및 사용자 관리</p>
+          </div>
+
+          {/* 관리자 탭 선택 */}
+          <div style={{display:"flex",gap:8,marginBottom:20}}>
+            {["방문자","입지평가 설정"].map(t=>(
+              <button key={t} onClick={()=>setAdminTab(t)}
+                className={adminTab===t?"btn-primary":"btn-secondary"}
+                style={{fontSize:13,padding:"8px 16px"}}>{t}</button>
+            ))}
+          </div>
+
+          {adminTab==="입지평가 설정" && (
+            <div className="card" style={{padding:24}}>
+              <p className="section-label">AI 입지평가 가중치 설정</p>
+              <p style={{fontSize:12,color:"#64748b",marginBottom:16}}>총합이 100이 되도록 설정하세요. Gemini AI가 이 기준으로 별점을 매깁니다.</p>
+              {Object.entries(weights).map(([key, val])=>(
+                <div key={key} style={{marginBottom:14}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:600}}>{key}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:"#1d4ed8"}}>{val}점</span>
+                  </div>
+                  <input type="range" min={0} max={50} value={val}
+                    onChange={e=>setWeights(w=>({...w,[key]:parseInt(e.target.value)}))}
+                    style={{width:"100%",accentColor:"#1d4ed8"}} />
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:16,paddingTop:12,borderTop:"1px solid #f1f5f9"}}>
+                <span style={{fontSize:13,fontWeight:700,color:Object.values(weights).reduce((a,b)=>a+b,0)===100?"#16a34a":"#dc2626"}}>
+                  합계: {Object.values(weights).reduce((a,b)=>a+b,0)}점 {Object.values(weights).reduce((a,b)=>a+b,0)===100?"✅":"⚠️ 100이 되어야 해요"}
+                </span>
+                <button className="btn-primary" onClick={saveWeights} style={{fontSize:13}}>저장</button>
+              </div>
+            </div>
+          )}
+          {adminTab==="방문자" && (
+            <div>
+              <div className="card" style={{padding:20,marginBottom:16,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
+                <p style={{fontSize:13,color:"#0369a1",fontWeight:600}}>📱 현재 내 IP: <code style={{background:"#e0f2fe",padding:"2px 8px",borderRadius:4}}>{myIp||"감지 중..."}</code></p>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+                {[
+                  {label:"총 방문자", value:visitors.length+"명", icon:"👥"},
+                  {label:"오늘 접속", value:visitors.filter(v=>v.lastVisit&&new Date(v.lastVisit).toDateString()===new Date().toDateString()).length+"명", icon:"📅"},
+                  {label:"총 방문수", value:visitors.reduce((s,v)=>s+(v.visits||0),0)+"회", icon:"🔢"},
+                ].map(s=>(
+                  <div key={s.label} className="card" style={{padding:"16px 20px",textAlign:"center"}}>
+                    <div style={{fontSize:24,marginBottom:6}}>{s.icon}</div>
+                    <p style={{fontSize:22,fontWeight:800,color:"#0f172a"}}>{s.value}</p>
+                    <p style={{fontSize:12,color:"#64748b"}}>{s.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="card" style={{padding:24}}>
+                <p className="section-label">방문자 목록</p>
+                {!window.IS_FB && <p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>Firebase 연결 시 방문자 기록이 표시됩니다</p>}
+                {visitors.length===0 && window.IS_FB && <p style={{color:"#94a3b8",fontSize:13,textAlign:"center",padding:"20px 0"}}>아직 방문 기록이 없어요</p>}
+                {visitors.map(v=>(
+                  <div key={v.id} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:"1px solid #f1f5f9",flexWrap:"wrap"}}>
+                    <div style={{width:36,height:36,background:v.ip===myIp?"#dbeafe":"#f1f5f9",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>
+                      {v.ip===myIp?"😊":"👤"}
+                    </div>
+                    <div style={{flex:1,minWidth:120}}>
+                      {editing===v.id
+                        ? <div style={{display:"flex",gap:6}}>
+                            <input className="input-field" value={newName} onChange={e=>setNewName(e.target.value)}
+                              onKeyDown={e=>e.key==="Enter"&&saveName(v.id)}
+                              placeholder="이름 입력" style={{padding:"4px 10px",fontSize:13}} autoFocus />
+                            <button className="btn-primary" onClick={()=>saveName(v.id)} style={{padding:"4px 12px",fontSize:12}}>저장</button>
+                            <button className="btn-secondary" onClick={()=>{setEditing(null);setNewName("");}} style={{padding:"4px 10px",fontSize:12}}>취소</button>
+                          </div>
+                        : <p style={{fontWeight:600,fontSize:14,color:v.ip===myIp?"#1d4ed8":"#0f172a"}}>
+                            {v.name||<span style={{color:"#94a3b8"}}>이름 없음</span>}
+                            {v.ip===myIp&&<span style={{fontSize:11,color:"#60a5fa"}}> (나)</span>}
+                          </p>
+                      }
+                      <p style={{fontSize:11,color:"#94a3b8",marginTop:2}}>{v.ip} · {v.visits||1}회 방문</p>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <p style={{fontSize:12,color:"#64748b"}}>{timeSince(v.lastVisit)}</p>
+                      <p style={{fontSize:11,color:"#94a3b8",marginTop:2}}>첫방문: {v.firstVisit?v.firstVisit.slice(0,10):"-"}</p>
+                    </div>
+                    {editing!==v.id && (
+                      <button className="btn-icon" onClick={()=>{setEditing(v.id);setNewName(v.name||"");}} style={{color:"#3b82f6",fontSize:14}}>✏️</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ─── PROPERTY FORM ─── */
+    const LBL = ({children}) => <label style={{display:"block",fontSize:13,fontWeight:600,color:"#374151",marginBottom:6}}>{children}</label>;
+
+    function PropertyForm({ initial, onSave, onCancel }) {
+      const [form, setForm] = useState(initial ? {...initial} : blankProp());
+      const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+      const handleSave = () => {
+        if (!form.buildingName.trim()&&!form.address.trim()) { alert("아파트명 또는 주소를 입력해주세요"); return; }
+        onSave(form);
+      };
+
+      return (
+        <div style={{padding:"36px 32px",maxWidth:780,margin:"0 auto"}} className="fade-up">
+          <div style={{marginBottom:30}}>
+            <h1 style={{fontSize:26,fontWeight:800,color:"#0f172a"}}>{initial?"임장 기록 수정":"새 임장 기록"}</h1>
+            <p style={{fontSize:14,color:"#64748b",marginTop:5}}>방문한 아파트 정보를 입력해주세요</p>
+          </div>
+
+          <div className="card" style={{padding:26,marginBottom:16}}>
+            <p className="section-label">기본 정보</p>
+
+            {/* 매물 타입 */}
+            <div style={{marginBottom:16}}>
+              <LBL>매물 유형</LBL>
+              <div style={{display:"flex",gap:8}}>
+                {["임장","관심매물"].map(t=>(
+                  <button key={t} type="button" onClick={()=>set("propertyType",t)}
+                    style={{padding:"8px 20px",borderRadius:20,border:"2px solid",cursor:"pointer",fontWeight:600,fontSize:13,
+                      borderColor:form.propertyType===t?"#1d4ed8":"#e2e8f0",
+                      background:form.propertyType===t?"#1d4ed8":"#fff",
+                      color:form.propertyType===t?"#fff":"#64748b",transition:"all .2s"}}>
+                    {t==="임장"?"🏃 임장완료":"👁 관심매물"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 아파트 검색 */}
+            <div style={{marginBottom:16}}>
+              <LBL>아파트명 검색 (주소·좌표 자동완성)</LBL>
+              <ApartmentSearch onSelect={r=>{
+                set("buildingName", r.buildingName);
+                set("address",      r.address);
+                set("lat",          r.lat);
+                set("lng",          r.lng);
+                if (r.dongCode) set("dongCode", r.dongCode);
+              }} />
+              <p style={{fontSize:11,color:"#94a3b8",marginTop:6}}>
+                💡 준공년도는 자동 입력이 어려워요. 아파트 이름으로 네이버/호갱노노 검색 후 직접 입력해주세요.
+              </p>
+            </div>
+
+            <div className="grid-2col" style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
+              <div><LBL>아파트명 *</LBL><input className="input-field" placeholder="예: 래미안 퍼스티지" value={form.buildingName} onChange={e=>set("buildingName",e.target.value)} /></div>
+              <div><LBL>임장일 / 등록일</LBL><input className="input-field" type="date" value={form.visitDate} onChange={e=>set("visitDate",e.target.value)} /></div>
+              <div style={{gridColumn:"1/-1"}}>
+                <LBL>주소</LBL>
+                <div style={{display:"flex",gap:8}}>
+                  <input className="input-field" placeholder="예: 서울시 강남구 대치동 123-4" value={form.address} onChange={e=>set("address",e.target.value)} style={{flex:1}} />
+                  <button type="button" className="btn-secondary" style={{flexShrink:0,padding:"10px 14px",fontSize:13,display:"flex",alignItems:"center",gap:5}}
+                    onClick={()=>{
+                      if (!form.address.trim()) return alert("주소를 먼저 입력해주세요");
+                      if (!window.__kakaoReady) {
+                        alert("카카오맵 로딩 중입니다. 잠시 후 다시 시도해주세요.");
+                        return;
+                      }
+                      kakao.maps.load(()=>{
+                        const geocoder = new kakao.maps.services.Geocoder();
+                        geocoder.addressSearch(form.address, (result, status) => {
+                          if (status === kakao.maps.services.Status.OK) {
+                            set("lat", parseFloat(result[0].y));
+                            set("lng", parseFloat(result[0].x));
+                            alert("📍 위치 설정 완료!");
+                          } else {
+                            alert("주소를 찾을 수 없어요. 더 자세히 입력해보세요.");
+                          }
+                        });
+                      });
+                    }}>
+                    {form.lat ? "📍 위치완료" : "📍 위치설정"}
+                  </button>
+                </div>
+                {form.lat && <p style={{fontSize:11,color:"#16a34a",marginTop:4,fontWeight:600}}>✅ 지도 좌표 설정됨 ({form.lat.toFixed(4)}, {form.lng.toFixed(4)})</p>}
+              </div>
+              <div><LBL>평수 (전용면적)</LBL><input className="input-field" placeholder="예: 34" value={form.size} onChange={e=>set("size",e.target.value)} /></div>
+              <div>
+                <LBL>준공년도</LBL>
+                <input className="input-field" placeholder="예: 2010" value={form.constructionYear} onChange={e=>set("constructionYear",e.target.value)} />
+                {form.constructionYear && parseInt(form.constructionYear)>1900 && (
+                  <p style={{fontSize:11,color:"#64748b",marginTop:4}}>{new Date().getFullYear()-parseInt(form.constructionYear)}년차</p>
+                )}
+              </div>
+              <div>
+                <LBL>법정동코드 (5자리) {form.dongCode && <span style={{color:"#16a34a",fontWeight:500}}>✅ 자동감지됨</span>}</LBL>
+                <input className="input-field" placeholder="아파트 검색 시 자동 입력 · 예: 11680"
+                  value={form.dongCode}
+                  onChange={e=>set("dongCode", e.target.value.replace(/[^0-9]/g,"").slice(0,5))} />
+                <p style={{fontSize:11,color:"#94a3b8",marginTop:4}}>
+                  검색으로 자동감지 안되면 → <a href="https://www.code.go.kr/stdcode/regCodeL.do" target="_blank" rel="noreferrer" style={{color:"#3b82f6"}}>코드 직접 조회</a>
+                </p>
+              </div>
+              <div>
+                <LBL>가격 (만원 단위)</LBL>
+                <input className="input-field" placeholder="예: 120000 → 12억원" value={form.price} onChange={e=>set("price",e.target.value.replace(/[^0-9]/g,""))} />
+                {form.price && <p style={{fontSize:12,color:"#1d4ed8",marginTop:5,fontWeight:600}}>= {formatPrice(form.price)}</p>}
+              </div>
+              <div><LBL>인근역</LBL><input className="input-field" placeholder="예: 강남역 도보 10분" value={form.nearbyStation} onChange={e=>set("nearbyStation",e.target.value)} /></div>
+            </div>
+          </div>
+
+          <div className="card" style={{padding:26,marginBottom:16}}>
+            <p className="section-label">주변 및 인프라</p>
+            <InfraEditor items={form.infrastructure} onChange={v=>set("infrastructure",v)} />
+          </div>
+
+          <div className="card" style={{padding:26,marginBottom:16}}>
+            <p className="section-label">사진 / 영상 (구글 드라이브 링크)</p>
+            <MediaEditor items={form.mediaLinks} onChange={v=>set("mediaLinks",v)} />
+          </div>
+
+          {/* AI 요약 */}
+          {IS_AI && (
+            <div className="card" style={{padding:20,marginBottom:12,background:"#f0f9ff",border:"1px solid #bae6fd"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:form.aiSummary?10:0}}>
+                <p style={{fontSize:13,fontWeight:600,color:"#0369a1"}}>🤖 AI 임장 평가 (50자)</p>
+                <AiSummaryBtn form={form} onResult={v=>set("aiSummary",v)} />
+              </div>
+              {form.aiSummary && <p style={{fontSize:13,color:"#0f172a",lineHeight:1.6}}>{form.aiSummary}</p>}
+            </div>
+          )}
+
+          <div className="card" style={{padding:26,marginBottom:28}}>
+            <p className="section-label">메모 / 기타</p>
+            <textarea className="textarea-field" placeholder="추가적인 인상, 단점, 특이사항 등을 자유롭게 적어주세요"
+              value={form.memo} onChange={e=>set("memo",e.target.value)} style={{minHeight:130}} />
+          </div>
+
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <button className="btn-secondary" onClick={onCancel}>취소</button>
+            <button className="btn-primary" onClick={handleSave} style={{padding:"10px 36px"}}>{initial?"수정 완료":"저장하기"}</button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ─── MAIN APP ─── */
+    function App() {
+      const [auth,        setAuth]        = useState(false);
+      const [properties,  setProperties]  = useState([]);
+      const [view,        setView]        = useState("list");
+      const [selected,    setSelected]    = useState(null);
+      const [editing,     setEditing]     = useState(null);
+      const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900);
+      const [isMobile,    setIsMobile]    = useState(window.innerWidth <= 900);
+      const [myIp,        setMyIp]        = useState("");
+      const [adminOpen,   setAdminOpen]   = useState(false);
+
+      useEffect(() => {
+        const h = () => {
+          const mobile = window.innerWidth <= 900;
+          setIsMobile(mobile);
+          if (mobile) setSidebarOpen(false);
+        };
+        window.addEventListener("resize", h);
+        return () => window.removeEventListener("resize", h);
+      }, []);
+
+      // 앱 시작 시 카카오맵 SDK 미리 로딩
+      useEffect(() => {
+        if (window.kakao && window.kakao.maps) { window.__kakaoReady = true; return; }
+        if (document.querySelector('script[data-kakao]')) return;
+        const s = document.createElement('script');
+        s.setAttribute('data-kakao', 'true');
+        s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=417d5280c5db719799c86b99168879b5&libraries=services&autoload=false';
+        s.onload = () => kakao.maps.load(() => { window.__kakaoReady = true; });
+        document.head.appendChild(s);
+      }, []);
+
+      /* IP 트래킹 */
+      useEffect(() => {
+        if (!auth) return;
+        fetch("https://api.ipify.org?format=json")
+          .then(r => r.json())
+          .then(({ ip }) => {
+            setMyIp(ip);
+            if (!window.IS_FB) return;
+            const safeIp = ip.replace(/\./g, "_");
+            window.db.collection("visitors").doc(safeIp).get().then(doc => {
+              if (!doc.exists) {
+                const name = window.prompt("👋 처음 오셨네요! 이름을 입력해주세요:") || "익명";
+                window.db.collection("visitors").doc(safeIp).set({
+                  ip, name, firstVisit: new Date().toISOString(),
+                  lastVisit: new Date().toISOString(), visits: 1
+                });
+              } else {
+                window.db.collection("visitors").doc(safeIp).update({
+                  lastVisit: new Date().toISOString(),
+                  visits: firebase.firestore.FieldValue.increment(1)
+                });
+              }
+            });
+          }).catch(() => {});
+      }, [auth]);
+
+      /* Data loading */
+      useEffect(() => {
+        if (!auth) return;
+
+        if (!window.IS_FB) {
+          setProperties(lsGet());
+          return;
+        }
+
+        const unsub = window.db.collection("properties")
+          .orderBy("createdAt", "desc")
+          .onSnapshot(snap => {
+            setProperties(snap.docs.map(d => ({ ...d.data(), id: d.id })));
+          }, err => console.error("Firestore error:", err));
+
+        return () => unsub();
+      }, [auth]);
+
+      /* CRUD */
+      const saveProp = async (prop) => {
+        if (!window.IS_FB) {
+          const next = editing
+            ? properties.map(p => p.id===prop.id ? prop : p)
+            : [prop, ...properties];
+          setProperties(next);
+          lsSet(next);
+        } else {
+          await window.db.collection("properties").doc(prop.id).set(prop);
+        }
+        if (editing) { setSelected(prop); setView("detail"); }
+        else { setView("list"); }
+        setEditing(null);
+      };
+
+      const deleteProp = async (id) => {
+        if (!window.IS_FB) {
+          const next = properties.filter(p => p.id!==id);
+          setProperties(next);
+          lsSet(next);
+        } else {
+          await window.db.collection("properties").doc(id).delete();
+        }
+        setSelected(null);
+        setView("list");
+      };
+
+      const go = (v) => { setView(v); setSelected(null); setEditing(null); };
+
+      if (!auth) return <PasswordGate onSuccess={()=>setAuth(true)} />;
+
+      return (
+        <div style={{display:"flex",minHeight:"100vh",position:"relative"}}>
+          <FontLoader />
+
+          {/* 사이드바 오버레이 (모바일 백드롭) */}
+          {sidebarOpen && isMobile && (
+            <div onClick={()=>setSidebarOpen(false)}
+              style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",zIndex:40}} />
+          )}
+
+          {/* 사이드바 - fixed 포지션, 토글 */}
+          {sidebarOpen && (
+            <div style={{
+              position:"fixed",top:0,left:0,bottom:0,width:220,
+              background:"#0c1829",zIndex:50,display:"flex",
+              flexDirection:"column",padding:"20px 12px",overflowY:"auto",
+              boxShadow:"4px 0 20px rgba(0,0,0,.3)"
+            }}>
+              {/* X 닫기 버튼 */}
+              <button onClick={()=>setSidebarOpen(false)}
+                style={{alignSelf:"flex-end",background:"transparent",border:"none",
+                  color:"#64748b",fontSize:20,cursor:"pointer",marginBottom:8,lineHeight:1,padding:4}}>✕</button>
+              <Sidebar view={view} setView={v=>{go(v); if(isMobile) setSidebarOpen(false);}}
+                count={properties.length}
+                onAdd={()=>{setEditing(null);setView("form"); if(isMobile) setSidebarOpen(false);}}
+                onClose={()=>setSidebarOpen(false)} />
+            </div>
+          )}
+
+          {/* 메인 콘텐츠 - 데스크탑에서 사이드바 열리면 오른쪽으로 밀림 */}
+          <main style={{
+            flex:1, minWidth:0, overflow:"auto", background:"#f0f4f9",
+            marginLeft: sidebarOpen && !isMobile ? 220 : 0,
+            transition:"margin-left .25s ease"
+          }}>
+            {/* 상단 바 - 항상 표시 (☰ 버튼) */}
+            <div style={{
+              display:"flex",alignItems:"center",gap:12,padding:"12px 16px",
+              background:"#0c1829",position:"sticky",top:0,zIndex:30,
+              boxShadow:"0 2px 8px rgba(0,0,0,.2)"
+            }}>
+              <button onClick={()=>setSidebarOpen(v=>!v)}
+                style={{background:"transparent",border:"none",color:"#fff",
+                  fontSize:22,cursor:"pointer",lineHeight:1,padding:"2px 6px",
+                  borderRadius:6,transition:"background .2s"}}
+                title={sidebarOpen?"메뉴 닫기":"메뉴 열기"}>☰</button>
+              <span style={{color:"#fff",fontWeight:700,fontSize:15,flex:1}}>🏠 임장 히스토리</span>
+              <button onClick={()=>{setEditing(null);setView("form");setSidebarOpen(false);}}
+                style={{background:"#1d4ed8",color:"#fff",border:"none",borderRadius:8,
+                  padding:"7px 14px",fontSize:13,fontWeight:600,cursor:"pointer"}}>+ 추가</button>
+            </div>
+
+            {/* 콘텐츠 */}
+            {view==="list" && <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />}
+            {view==="map"  && <MapView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} />}
+            {view==="admin" && <AdminView onBack={()=>setView("list")} myIp={myIp} />}
+            {view==="game"  && <BulletGameTab myIp={myIp} />}
             {view==="detail" && selected && <DetailView prop={selected} onEdit={()=>{setEditing(selected);setView("form");}} onDelete={()=>deleteProp(selected.id)} onBack={()=>go("list")} />}
             {view==="form" && <PropertyForm initial={editing} onSave={saveProp} onCancel={()=>{setEditing(null);setView(editing?"detail":"list");}} />}
             {/* 하단 네비게이션 */}
