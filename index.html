@@ -60,6 +60,10 @@
     .sidebar-col  { display:none !important; }
     .mob-topbar   { display:flex !important; }
     .mob-close-x  { display:block !important; }
+  /* 카카오맵 컨트롤 축소 */
+  #kakao-map .wrap_map_widget,
+  #kakao-map .map_widget,
+  #kakao-map > div > div:last-child > div { transform:scale(0.55) !important; transform-origin:top right !important; }
   }
   @media (max-width:640px) {
     .page-pad    { padding:12px !important; }
@@ -507,6 +511,14 @@
 
           });
           if (hasMarker) map.setBounds(bounds);
+          // 컨트롤 크기 축소
+          setTimeout(() => {
+            const ctrls = document.querySelectorAll('#kakao-map > div > div:last-child');
+            ctrls.forEach(el => {
+              el.style.transform='scale(0.55)';
+              el.style.transformOrigin='top right';
+            });
+          }, 800);
         };
         initMap();
       }, [kakaoReady, properties]);
@@ -1274,8 +1286,9 @@
         const results = [];
         const now = new Date();
         const proxies = [
+          (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
           (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
-          (url) => "https://api.allorigins.win/get?url=" + encodeURIComponent(url),
+          (url) => "https://thingproxy.freeboard.io/fetch/" + url,
           (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
         ];
         let workingProxy = null;
@@ -2036,7 +2049,7 @@
 
 async function generateAiSummary(prop) {
       if (!IS_AI) return null;
-      const models = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"];
+      const models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash-preview-04-17"];
       const wStr = Object.entries(locationWeights).map(([k,v])=>k+":"+v).join(",");
       const infra = prop.infrastructure.map(i=>i.label).join(",") || "없음";
       const prompt = "아파트 입지를 평가해서 JSON으로만 응답. 다른말 없이 JSON만. " +
