@@ -2033,13 +2033,8 @@
         </div>
       );
     }
-    ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
-  </script>
-</body>
-</html>
 
-
-    async function generateAiSummary(prop) {
+async function generateAiSummary(prop) {
       if (!IS_AI) return null;
       const models = ["gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"];
       const wStr = Object.entries(locationWeights).map(([k,v])=>k+":"+v).join(",");
@@ -2072,8 +2067,7 @@
       return null;
     }
 
-
-ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
+    ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
   </script>
 </body>
 </html>
