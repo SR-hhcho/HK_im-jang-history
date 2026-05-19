@@ -60,6 +60,11 @@
     .sidebar-col  { display:none !important; }
     .mob-topbar   { display:flex !important; }
     .mob-close-x  { display:block !important; }
+  .view-toggle { display:flex; background:#e8edf5; border-radius:24px; padding:3px; gap:2px; }
+  .view-toggle-btn { flex:1; padding:8px 16px; border:none; border-radius:20px; font-size:13px; font-weight:600; cursor:pointer; font-family:inherit; transition:all .2s; background:transparent; color:#64748b; }
+  .view-toggle-btn.active { background:#fff; color:#1d4ed8; box-shadow:0 2px 8px rgba(0,0,0,.12); }
+  .map-fullscreen { width:100%; height:calc(100dvh - 120px); min-height:300px; }
+  @media (max-width:640px) { .map-fullscreen { height:calc(100dvh - 116px); } }
 
   }
   @media (max-width:640px) {
@@ -294,8 +299,8 @@
             <span style={{fontSize:18,lineHeight:1}}>+</span> 임장 추가
           </button>
           <nav style={{display:"flex",flexDirection:"column",gap:4}}>
-            {[{id:"list",icon:"☰",label:"전체 목록",badge:count},{id:"map",icon:"🗺",label:"지도 보기"}].map(l=>(
-              <button key={l.id} className={`sidebar-link${view===l.id?" active":""}`} onClick={()=>setView(l.id)}>
+            {[{id:"list",icon:"☰",label:"전체 목록",badge:count},{id:"map",icon:"🗺",label:"지도 보기",tab:"map"}].map(l=>(
+              <button key={l.id} className={`sidebar-link${view===l.id&&(l.tab?homeTab===l.tab:true)?" active":""}`} onClick={()=>{if(l.tab){setHomeTab(l.tab);setView("list");}else setView(l.id);}}>
                 <span>{l.icon}</span>
                 <span style={{flex:1}}>{l.label}</span>
                 {l.badge!==undefined && <span style={{background:"rgba(255,255,255,.1)",color:"#94a3b8",fontSize:11,padding:"2px 8px",borderRadius:12,fontWeight:700}}>{l.badge}</span>}
@@ -425,6 +430,91 @@
     }
 
     /* ─── MAP VIEW ─── */
+
+    /* ─── MAP FULLSCREEN ─── */
+    function MapFullscreen({ properties, onSelect }) {
+      const [kakaoReady, setKakaoReady] = useState(!!window.__kakaoReady);
+
+      useEffect(() => {
+        window.__mapGoDetail = (id) => {
+          const p = properties.find(x => x.id === id);
+          if (p && onSelect) onSelect(p);
+        };
+      }, [properties, onSelect]);
+
+      useEffect(() => {
+        if (window.__kakaoReady) { setKakaoReady(true); return; }
+        const check = setInterval(() => {
+          if (window.__kakaoReady) { setKakaoReady(true); clearInterval(check); }
+        }, 200);
+        return () => clearInterval(check);
+      }, []);
+
+      useEffect(() => {
+        if (!kakaoReady) return;
+        kakao.maps.load(() => {
+          const container = document.getElementById("kakao-map-full");
+          if (!container) return;
+          const map = new kakao.maps.Map(container, {
+            center: new kakao.maps.LatLng(37.5665, 126.9780), level: 9
+          });
+          const bounds = new kakao.maps.LatLngBounds();
+          let hasMarker = false, openOverlay = null;
+
+          properties.forEach(prop => {
+            if (!prop.lat || !prop.lng) return;
+            const pos = new kakao.maps.LatLng(prop.lat, prop.lng);
+            bounds.extend(pos); hasMarker = true;
+            const dotColor = prop.propertyType === "관심매물" ? "#f59e0b" : "#2563eb";
+            const dotEl = document.createElement("div");
+            dotEl.innerHTML = `<div style="width:14px;height:14px;border-radius:50%;background:${dotColor};border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4);cursor:pointer;transform:translate(-50%,-50%)"></div>`;
+            new kakao.maps.CustomOverlay({content:dotEl, position:pos, zIndex:3}).setMap(map);
+
+            const label = new kakao.maps.CustomOverlay({
+              content: `<div style="background:rgba(15,23,42,0.88);color:#fff;padding:3px 8px;border-radius:10px;font-size:10px;font-weight:700;white-space:nowrap;pointer-events:none;border-left:3px solid ${dotColor}"><div>${prop.buildingName||""}</div>${prop.userRating||prop.aiRating?`<div style="color:${prop.userRating?"#f59e0b":"#93c5fd"}">★ ${Number(prop.userRating||prop.aiRating).toFixed(1)}</div>`:""}</div>`,
+              position: pos, yAnchor: -0.2, zIndex: 2
+            });
+            label.setMap(map);
+
+            const overlay = new kakao.maps.CustomOverlay({
+              content: `<div style="background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 4px 16px rgba(0,0,0,.2);min-width:180px;border-top:3px solid ${dotColor};font-family:sans-serif">
+                <p style="font-weight:700;font-size:13px;color:#0f172a;margin-bottom:3px">${prop.buildingName||"이름없음"}</p>
+                <p style="font-size:11px;color:#64748b;margin-bottom:5px">${prop.address||""}</p>
+                <p style="font-size:13px;color:#16a34a;font-weight:700;margin-bottom:8px">${prop.price?formatPrice(prop.price):"가격 미입력"}</p>
+                <div onclick="(function(){if(window.__mapGoDetail)window.__mapGoDetail('${prop.id}');})()"
+                  style="padding:6px 0;background:#1d4ed8;color:#fff;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;text-align:center">상세보기 →</div>
+              </div>`,
+              position: pos, yAnchor: 1.45, zIndex: 3
+            });
+            dotEl.addEventListener("click", () => {
+              if (openOverlay) openOverlay.setMap(null);
+              if (openOverlay === overlay) { openOverlay = null; return; }
+              overlay.setMap(map); openOverlay = overlay;
+            });
+          });
+          if (hasMarker) map.setBounds(bounds);
+        });
+      }, [kakaoReady, properties]);
+
+      const withCoords = properties.filter(p => p.lat && p.lng).length;
+      const noCoords   = properties.filter(p => !p.lat || !p.lng).length;
+
+      return (
+        <div style={{position:"relative"}}>
+          {/* 지도 풀스크린 - 프레임 없음 */}
+          {!kakaoReady
+            ? <div className="map-fullscreen" style={{display:"flex",alignItems:"center",justifyContent:"center",background:"#f0f4f9",color:"#64748b",fontSize:14}}>🗺️ 지도 불러오는 중...</div>
+            : <div id="kakao-map-full" className="map-fullscreen" />
+          }
+          {/* 위치 현황 뱃지 */}
+          <div style={{position:"absolute",bottom:12,left:12,display:"flex",gap:6,zIndex:10}}>
+            <span style={{background:"rgba(15,23,42,.8)",color:"#fff",fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600}}>📍 {withCoords}곳 표시</span>
+            {noCoords>0&&<span style={{background:"rgba(245,158,11,.9)",color:"#fff",fontSize:11,padding:"4px 10px",borderRadius:20,fontWeight:600}}>⚠️ {noCoords}곳 미설정</span>}
+          </div>
+        </div>
+      );
+    }
+
     function MapView({ properties, onSelect }) {
       const [kakaoReady, setKakaoReady] = useState(false);
       const [loadError, setLoadError] = useState(false);
@@ -1834,6 +1924,7 @@
       const [selected,    setSelected]    = useState(null);
       const [editing,     setEditing]     = useState(null);
       const [sidebarOpen, setSidebarOpen] = useState(window.innerWidth > 900);
+      const [homeTab, setHomeTab]         = useState("list"); // "list" | "map"
       const [isMobile,    setIsMobile]    = useState(window.innerWidth <= 900);
       const [myIp,        setMyIp]        = useState("");
       const [adminOpen,   setAdminOpen]   = useState(false);
@@ -1988,8 +2079,21 @@
             </div>
 
             {/* 콘텐츠 */}
-            {view==="list" && <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />}
-            {view==="map"  && <MapView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} />}
+            {(view==="list"||view==="map") && (
+              <div>
+                {/* 목록/지도 토글 */}
+                <div style={{padding:"12px 16px 8px",display:"flex",justifyContent:"center"}}>
+                  <div className="view-toggle">
+                    <button className={`view-toggle-btn${homeTab==="list"?" active":""}`} onClick={()=>setHomeTab("list")}>☰ 목록</button>
+                    <button className={`view-toggle-btn${homeTab==="map"?" active":""}`}  onClick={()=>setHomeTab("map")}>🗺 지도</button>
+                  </div>
+                </div>
+                {homeTab==="list"
+                  ? <ListView properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} onEdit={p=>{setEditing(p);setView("form");}} onDelete={id=>deleteProp(id)} onAdd={()=>{setEditing(null);setView("form");}} />
+                  : <MapFullscreen properties={properties} onSelect={p=>{setSelected(p);setView("detail");}} />
+                }
+              </div>
+            )}
             {view==="admin" && <AdminView onBack={()=>setView("list")} myIp={myIp} />}
             {view==="game"  && <BulletGameTab myIp={myIp} />}
             {view==="detail" && selected && <DetailView prop={selected} onEdit={()=>{setEditing(selected);setView("form");}} onDelete={()=>deleteProp(selected.id)} onBack={()=>go("list")} />}
@@ -1998,7 +2102,7 @@
             <nav className="bottom-nav">
               {[
                 {id:"list", icon:"🏠", label:"목록"},
-                {id:"map",  icon:"🗺", label:"지도"},
+                {id:"map",  icon:"🗺", label:"지도", tab:"map"},
                 {id:"add",  icon:"➕", label:"추가"},
                 {id:"game", icon:"🎮", label:"게임"},
                 {id:"admin",icon:"🔐", label:"관리"},
@@ -2006,7 +2110,11 @@
                 <button key={btn.id} className={`bnav-btn${view===btn.id?" active":""}`}
                   onClick={()=>{
                     if(btn.id==="add"){setEditing(null);setView("form");setSidebarOpen(false);}
-                    else{go(btn.id);setSidebarOpen(false);}
+                    else{
+                      if(btn.tab){setHomeTab(btn.tab);go("list");}
+                      else{go(btn.id);}
+                      setSidebarOpen(false);
+                    }
                   }}>
                   <span className="bnav-icon">{btn.icon}</span>
                   <span>{btn.label}</span>
@@ -2074,8 +2182,7 @@ async function generateAiSummary(prop) {
     /* ─── APARTMENT SEARCH ─── */
 
     /* ─── ADMIN VIEW ─── */
-    const ADMIN_PASS = "admin1234";
-
+    
 
     /* ─── PROPERTY FORM ─── */
     const LBL = ({children}) => <label style={{display:"block",fontSize:13,fontWeight:600,color:"#374151",marginBottom:6}}>{children}</label>;
