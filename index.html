@@ -60,10 +60,7 @@
     .sidebar-col  { display:none !important; }
     .mob-topbar   { display:flex !important; }
     .mob-close-x  { display:block !important; }
-  /* 카카오맵 컨트롤 축소 */
-  #kakao-map .wrap_map_widget,
-  #kakao-map .map_widget,
-  #kakao-map > div > div:last-child > div { transform:scale(0.55) !important; transform-origin:top right !important; }
+
   }
   @media (max-width:640px) {
     .page-pad    { padding:12px !important; }
@@ -453,8 +450,7 @@
           const map = new kakao.maps.Map(container, {
             center: new kakao.maps.LatLng(37.5665, 126.9780), level: 9
           });
-          map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
-          map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPLEFT);
+          // 컨트롤 없음 (모바일 핀치줌, 데스크탑 스크롤 사용)
 
           const bounds = new kakao.maps.LatLngBounds();
           let hasMarker = false;
@@ -511,14 +507,7 @@
 
           });
           if (hasMarker) map.setBounds(bounds);
-          // 컨트롤 크기 축소
-          setTimeout(() => {
-            const ctrls = document.querySelectorAll('#kakao-map > div > div:last-child');
-            ctrls.forEach(el => {
-              el.style.transform='scale(0.55)';
-              el.style.transformOrigin='top right';
-            });
-          }, 800);
+
         };
         initMap();
       }, [kakaoReady, properties]);
@@ -1286,9 +1275,9 @@
         const results = [];
         const now = new Date();
         const proxies = [
-          (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
+          (url) => url,                                                                    // 직접 fetch
           (url) => "https://corsproxy.io/?" + encodeURIComponent(url),
-          (url) => "https://thingproxy.freeboard.io/fetch/" + url,
+          (url) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(url),
           (url) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(url),
         ];
         let workingProxy = null;
@@ -2049,7 +2038,7 @@
 
 async function generateAiSummary(prop) {
       if (!IS_AI) return null;
-      const models = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-flash-8b", "gemini-2.5-flash-preview-04-17"];
+      const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
       const wStr = Object.entries(locationWeights).map(([k,v])=>k+":"+v).join(",");
       const infra = prop.infrastructure.map(i=>i.label).join(",") || "없음";
       const prompt = "아파트 입지를 평가해서 JSON으로만 응답. 다른말 없이 JSON만. " +
@@ -2060,7 +2049,7 @@ async function generateAiSummary(prop) {
         'JSON형식: {"rating":4.2,"summary":"50자이내평가","scores":{"역세권":4,"학군":4,"교통":4,"편의시설":4,"자연환경":3,"주차":3,"단지규모":4,"브랜드":3}}';
       for (const model of models) {
         try {
-          const url = "https://generativelanguage.googleapis.com/v1beta/models/" + model + ":generateContent?key=" + GEMINI_KEY;
+          const url = "https://generativelanguage.googleapis.com/v1/models/" + model + ":generateContent?key=" + GEMINI_KEY;
           const res = await fetch(url, {
             method:"POST",
             headers:{"Content-Type":"application/json"},
@@ -2080,7 +2069,21 @@ async function generateAiSummary(prop) {
       return null;
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
+    /* ─── PRICE CHART ─── */
+
+    /* ─── APARTMENT SEARCH ─── */
+
+    /* ─── ADMIN VIEW ─── */
+    const ADMIN_PASS = "admin1234";
+
+
+    /* ─── PROPERTY FORM ─── */
+    const LBL = ({children}) => <label style={{display:"block",fontSize:13,fontWeight:600,color:"#374151",marginBottom:6}}>{children}</label>;
+
+
+    /* ─── MAIN APP ─── */
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<MobilePreviewWrapper />);
   </script>
 </body>
 </html>
