@@ -172,7 +172,7 @@
     };
 
 
-    const GEMINI_KEY = "AIzaSyAPTvEyADUgsUpWozjZ7XZLZLSnwhiSZWI";
+    const GEMINI_KEY = "AIzaSyBGmYvkWL_oi9XbrC5PhAfD37EFjx6da48";
 
     const DEFAULT_WEIGHTS = {
       "역세권":   20,
@@ -646,49 +646,46 @@
     /* ─── DETAIL VIEW ─── */
     /* ─── STARS ─── */
     function Stars({ rating, size=16, color="#f59e0b" }) {
-      if (!rating) return null;
-      const full = Math.floor(rating);
-      const half = (rating % 1) >= 0.4;
-      const empty = 5 - full - (half ? 1 : 0);
+      if (!rating && rating !== 0) return null;
+      const r = Number(rating);
+      const filled = Math.round(r / 2); // 0~10 → 0~5 별
+      const empty  = 5 - filled;
       return (
         <span style={{color, fontSize:size, lineHeight:1, letterSpacing:1}}>
-          {"★".repeat(full)}{half?"½":""}{"☆".repeat(empty)}
-          <span style={{fontSize:size*0.75, marginLeft:4, fontWeight:700}}>{rating.toFixed(1)}</span>
+          {"★".repeat(filled)}{"☆".repeat(empty)}
+          <span style={{fontSize:size*0.8, marginLeft:5, fontWeight:800, color}}>{r.toFixed(1)}<span style={{fontSize:size*0.65,opacity:.7}}>/10</span></span>
         </span>
       );
     }
 
     function StarInput({ value, onChange }) {
+      // 0~10점, 별 5개 (별 1개 = 2점)
       const [hover, setHover] = useState(null);
+      const toScore = (n, isLeft) => isLeft ? (n*2-1) : n*2; // 별n 왼쪽=홀수, 오른쪽=짝수
       const handleMove = (e, n) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const x = (e.touches?e.touches[0].clientX:e.clientX) - rect.left;
-        setHover(x < rect.width/2 ? n-0.5 : n);
+        setHover(toScore(n, x < rect.width/2));
       };
       const handleClick = (e, n) => {
         const rect = e.currentTarget.getBoundingClientRect();
         const x = e.clientX - rect.left;
-        const v = x < rect.width/2 ? n-0.5 : n;
+        const v = toScore(n, x < rect.width/2);
         onChange(value===v ? null : v);
       };
-      const display = hover ?? value ?? 0;
+      const disp = hover ?? value ?? 0;
+      const dispStar = disp / 2; // 0~10 → 0~5
       return (
         <div style={{display:"flex",gap:2,alignItems:"center"}}>
           {[1,2,3,4,5].map(n=>(
             <span key={n}
               onMouseMove={e=>handleMove(e,n)} onMouseLeave={()=>setHover(null)}
               onClick={e=>handleClick(e,n)}
-              style={{fontSize:30,cursor:"pointer",lineHeight:1,position:"relative",
-                color: display>=n?"#f59e0b": display>=n-0.5?"#f59e0b":"#e2e8f0",
-                background: display>=n-0.5&&display<n
-                  ? "linear-gradient(90deg,#f59e0b 50%,#e2e8f0 50%)"
-                  : "transparent",
-                WebkitBackgroundClip: display>=n-0.5&&display<n?"text":"unset",
-                WebkitTextFillColor: display>=n-0.5&&display<n?"transparent":"unset",
-              }}>★</span>
+              style={{fontSize:30,cursor:"pointer",lineHeight:1,
+                color: dispStar>=n?"#f59e0b": dispStar>=n-0.5?"#f59e0b":"#e2e8f0"}}>★</span>
           ))}
-          {value && <span style={{fontSize:12,color:"#64748b",marginLeft:6,fontWeight:700}}>{value}점</span>}
-          {value && <button onClick={()=>onChange(null)} style={{fontSize:11,color:"#94a3b8",background:"transparent",border:"none",cursor:"pointer"}}>초기화</button>}
+          {value!=null && <span style={{fontSize:13,color:"#f59e0b",marginLeft:8,fontWeight:800}}>{value}<span style={{fontSize:10,color:"#94a3b8"}}>/10</span></span>}
+          {value!=null && <button onClick={()=>onChange(null)} style={{fontSize:11,color:"#94a3b8",background:"transparent",border:"none",cursor:"pointer"}}>초기화</button>}
         </div>
       );
     }
@@ -2154,7 +2151,7 @@ async function generateAiSummary(prop) {
         "가격:" + (formatPrice(prop.price)||"미입력") + " " + (prop.size||"?") + "평 " +
         "준공:" + (prop.constructionYear||"미상") + "년 인프라:" + infra + " " +
         "가중치(" + wStr + ") " +
-        'JSON형식: {"rating":4.2,"summary":"50자이내평가","scores":{"역세권":4,"학군":4,"교통":4,"편의시설":4,"자연환경":3,"주차":3,"단지규모":4,"브랜드":3}}';
+        'JSON형식(점수는0~10): {"rating":8.5,"summary":"50자이내평가","scores":{"역세권":8,"학군":7,"교통":8,"편의시설":7,"자연환경":6,"주차":6,"단지규모":8,"브랜드":7}}';
       for (const model of models) {
         try {
           const url = "https://generativelanguage.googleapis.com/v1/models/" + model + ":generateContent?key=" + GEMINI_KEY;
@@ -2185,8 +2182,7 @@ async function generateAiSummary(prop) {
     
 
     /* ─── PROPERTY FORM ─── */
-    const LBL = ({children}) => <label style={{display:"block",fontSize:13,fontWeight:600,color:"#374151",marginBottom:6}}>{children}</label>;
-
+    
 
     /* ─── MAIN APP ─── */
 
